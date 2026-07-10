@@ -8,19 +8,19 @@
 
 ```
 CSV/JSON (Kaggle)
-      ↓
+    ↓
 PySpark (Databricks) → Iceberg Bronze/Silver (S3)
-      ↓
-dbt-spark (Databricks) → Iceberg Gold (S3)
-      ↓
-┌──────────────────┴───────────────────┐
-│                                       │
-MongoDB                           DuckDB
-- Dataset metadata                - Query Gold layer
-- Schema, stats                   - Embedded
-- Lineage                         - Read-only
-│                                       │
-└──────────────────┬────────────────────┘
+    ↓
+dbt-spark → Iceberg Gold (S3)
+                     ↓
+  ┌──────────────────┴──────────────────┐
+  │                                     │
+MongoDB                             DuckDB
+- Dataset metadata              - Query Gold layer
+- Schema, stats                 - Embedded
+- Lineage                       - Read-only
+  │                                     │
+  └────────────────┬────────────────────┘
                    │
             FastAPI (Simple)
          - GET /datasets

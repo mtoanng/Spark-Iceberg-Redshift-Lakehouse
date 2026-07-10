@@ -1,63 +1,91 @@
-version: "3.9"
+version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15
-    container_name: postgres
-    restart: always
-    environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
-      POSTGRES_DB: olist
+  # MongoDB - Metadata Catalog
+  mongodb:
+    image: mongo:7.0
+    container_name: instacart-mongodb
+    restart: unless-stopped
     ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  spark:
-    image: bitnami/spark:3.5.0
-    container_name: spark
+      - "27017:27017"
     environment:
-      - SPARK_MODE=standalone
-      - SPARK_MASTER_HOST=spark
-    ports:
-      - "7077:7077"
-      - "8081:8081"
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+      MONGO_INITDB_DATABASE: instacart_metadata
     volumes:
-      - ./PySpark:/opt/spark/PySpark
-      - ./data:/opt/spark/data
-      - ./jars/postgresql-42.7.3.jar:/opt/bitnami/spark/jars/postgresql-42.7.3.jar
+      - mongodb-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - warehouse-network
 
-  airflow:
+  # Warehouse API - FastAPI + DuckDB
+  warehouse-api:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: airflow
-    restart: always
-    depends_on:
-      - postgres
-      - spark
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/olist
-      - AIRFLOW__CORE__FERNET_KEY=your_fernet_key
-      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./PySpark:/opt/airflow/PySpark
-      - ./data:/opt/airflow/data
-      - ./sql:/opt/airflow/sql
+      dockerfile: Dockerfile.warehouse
+    container_name: instacart-warehouse-api
+    restart: unless-stopped
     ports:
-      - "8080:8080"
-    command: >
-      bash -c "
-        airflow db init &&
-        airflow users create --username admin --password admin --firstname Toan --lastname Nguyen --role Admin --email admin@example.com &&
-        airflow webserver -p 8080 & 
-        airflow scheduler
-      "
+      - "8000:8000"
+    environment:
+      # MongoDB connection
+      MONGODB_URI: mongodb://admin:admin123@mongodb:27017/
+      MONGODB_DATABASE: instacart_metadata
+      
+      # AWS credentials (for S3 access)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      
+      # S3 paths
+      S3_BUCKET: ${S3_BUCKET}
+      S3_GOLD_PATH: s3://${S3_BUCKET}/gold
+      
+      # API settings
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./warehouse:/app/warehouse
+      - ./config:/app/config
+      - ~/.aws:/root/.aws:ro  # Mount AWS credentials
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - warehouse-network
+
+  # MongoDB Express - Web UI for MongoDB (Optional)
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: instacart-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: admin123
+      ME_CONFIG_MONGODB_URL: mongodb://admin:admin123@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    depends_on:
+      - mongodb
+    networks:
+      - warehouse-network
 
 volumes:
-  postgres_data:
+  mongodb-data:
+    driver: local
 
+networks:
+  warehouse-network:
+    driver: bridge
