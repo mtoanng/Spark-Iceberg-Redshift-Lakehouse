@@ -1,15 +1,57 @@
-# Core
-pyspark==3.5.0
-psycopg2-binary==2.9.9
+# Core Data Processing
+pyspark>=3.4.0
+pandas>=2.0.0
+numpy>=1.24.0
 
-# Airflow core
-apache-airflow==2.9.0
+# Apache Iceberg
+pyiceberg>=0.5.0
 
-# Airflow providers (for Spark & Postgres integrating)
-apache-airflow-providers-apache-spark==4.1.0
-apache-airflow-providers-postgres==5.10.0
+# AWS (S3 Storage)
+boto3>=1.28.0
+botocore>=1.31.0
 
-# Utils
-pandas==2.2.2
-numpy==1.26.4
+# dbt
+dbt-core>=1.7.0
+dbt-spark>=1.7.0
 
+# Airflow
+apache-airflow>=2.7.0
+apache-airflow-providers-amazon>=8.13.0
+apache-airflow-providers-apache-spark>=4.3.0
+
+# Data Quality
+great-expectations>=0.18.0
+
+# Kaggle API
+kaggle>=1.5.16
+
+# MongoDB (metadata catalog)
+pymongo>=4.5.0
+
+# DuckDB (query engine)
+duckdb>=0.10.0
+
+# FastAPI (warehouse service)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+
+# HTTP client
+requests>=2.31.0
+
+# Infrastructure
+python-terraform>=0.10.1
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+click>=8.1.7
+tabulate>=0.9.0
+colorama>=0.4.6
+
+# Development
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.0

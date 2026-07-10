@@ -1,6 +1,128 @@
-raw/
-*.log
+# Python
 __pycache__/
-.venv/
-airflow_home/
-*.jar
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints
+
+# Data files (large CSV files)
+data/
+*.csv
+*.parquet
+*.json
+!dbt_instacart/**/*.json
+
+# GCP Credentials
+credentials/
+*.json
+!dbt_instacart/**/*.json
+!terraform/**/*.json
+.gcp/
+service-account-*.json
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
+airflow-*.pid
+airflow-*.err
+airflow-*.log
+
+# dbt
+dbt_instacart/target/
+dbt_instacart/dbt_packages/
+dbt_instacart/logs/
+dbt_instacart/profiles.yml
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Kaggle
+.kaggle/kaggle.json
+
+# Logs
+logs/
+*.log
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+
+# Documentation build
+site/
+docs/_build/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+
+# Kiro
+.kiro/

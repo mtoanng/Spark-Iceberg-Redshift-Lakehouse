@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "Staged orders with user metrics"
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      
+      - name: user_id
+        description: "User identifier"
+        tests:
+          - not_null
+  
+  - name: stg_order_products
+    description: "Staged order-product associations"
+    columns:
+      - name: order_id
+        description: "Order identifier"
+        tests:
+          - not_null
+      
+      - name: product_id
+        description: "Product identifier"
+        tests:
+          - not_null
+      
+      - name: product_name
+        description: "Product name"
+        tests:
+          - not_null
+  
+  - name: stg_products
+    description: "Staged products with hierarchy"
+    columns:
+      - name: product_id
+        description: "Unique product identifier"
+        tests:
+          - unique
+          - not_null
+  
+  - name: stg_users
+    description: "Staged user summary metrics"
+    columns:
+      - name: user_id
+        description: "Unique user identifier"
+        tests:
+          - unique
+          - not_null
+      
+      - name: total_orders
+        description: "Total orders placed"
+        tests:
+          - not_null

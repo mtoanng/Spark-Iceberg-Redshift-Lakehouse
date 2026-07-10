@@ -1,0 +1,74 @@
+name: 'instacart_lakehouse'
+version: '1.0.0'
+config-version: 2
+
+# Project profile
+profile: 'instacart_lakehouse'
+
+# Directories
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+# Build artifacts
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+# Model configurations
+models:
+  instacart_lakehouse:
+    # Staging layer - Read from Iceberg Silver, transform as views
+    staging:
+      +materialized: view
+      +schema: gold
+      +file_format: iceberg
+    
+    # Marts layer - Dimensional model in Iceberg Gold
+    marts:
+      # Dimensions - Materialize as Iceberg tables
+      dimensions:
+        +materialized: table
+        +schema: gold
+        +file_format: iceberg
+      
+      # Facts - Materialize as Iceberg tables with partitioning
+      facts:
+        +materialized: table
+        +schema: gold
+        +file_format: iceberg
+        +partition_by: ['order_date']
+      
+      # Analytics - Materialize as views
+      analytics:
+        +materialized: view
+        +schema: gold
+        +file_format: iceberg
+
+# Seeds configuration
+seeds:
+  instacart_lakehouse:
+    +schema: seeds
+
+# Snapshots configuration
+snapshots:
+  instacart_lakehouse:
+    +target_schema: snapshots
+
+# Documentation
+docs-paths: ["docs"]
+
+# Variables
+vars:
+  # Date range for incremental loads
+  start_date: '2017-01-01'
+  end_date: '2017-12-31'
+  
+  # Business rules
+  min_orders_for_power_user: 10
+  reorder_threshold_days: 30
