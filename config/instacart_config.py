@@ -137,6 +137,20 @@ DUCKDB_DATABASE = "warehouse.db"  # Embedded DuckDB database
 DUCKDB_MEMORY_LIMIT = "2GB"
 DUCKDB_THREADS = 4
 
+# Gold layer Iceberg table paths (for DuckDB view registration at startup).
+# DuckDB iceberg extension reads metadata files directly from S3 — no catalog needed.
+# By creating views at init, metadata is resolved ONCE instead of per-query.
+GOLD_ICEBERG_TABLES = {
+    "fct_order_products": f"{S3_GOLD_PATH}/fct_order_products",
+    "dim_product": f"{S3_GOLD_PATH}/dim_product",
+    "dim_orders": f"{S3_GOLD_PATH}/dim_orders",
+    "mart_department_demand": f"{S3_GOLD_PATH}/mart_department_demand",
+    "mart_product_reorder_rate": f"{S3_GOLD_PATH}/mart_product_reorder_rate",
+}
+
+# Default row limit for queries (prevents OOM from unbounded SELECT *)
+DUCKDB_DEFAULT_ROW_LIMIT = 10_000
+
 # =============================================================================
 # dbt Configuration
 # =============================================================================

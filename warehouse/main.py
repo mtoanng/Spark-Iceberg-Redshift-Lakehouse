@@ -28,9 +28,16 @@ metadata_store = None
 async def startup_event():
     """Initialize engines on startup"""
     global duckdb_engine, metadata_store
-    
+
+    # Load row limit from config (with fallback)
+    try:
+        from config.instacart_config import DUCKDB_DEFAULT_ROW_LIMIT
+    except ImportError:
+        DUCKDB_DEFAULT_ROW_LIMIT = 10_000
+
     duckdb_engine = DuckDBEngine(
-        iceberg_path=os.getenv("S3_GOLD_PATH", "s3://instacart-lakehouse/gold")
+        iceberg_path=os.getenv("S3_GOLD_PATH", "s3://instacart-lakehouse/gold"),
+        row_limit=DUCKDB_DEFAULT_ROW_LIMIT,
     )
     metadata_store = MetadataStore(
         uri=os.getenv("MONGODB_URI", "mongodb://localhost:27017"),
@@ -184,6 +191,22 @@ async def query_history(limit: int = 50):
         limit: Maximum number of records to return (default 50)
     """
     return metadata_store.get_query_history(limit)
+
+
+@app.post("/refresh", tags=["Admin"])
+async def refresh_views():
+    """
+    Re-register Iceberg views after new snapshots are written to S3.
+    Call this after dbt run to pick up fresh data.
+    """
+    try:
+        duckdb_engine.refresh_views()
+        return {
+            "status": "ok",
+            "registered_views": duckdb_engine.registered_views,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh views: {str(e)}")
 
 
 @app.exception_handler(Exception)
