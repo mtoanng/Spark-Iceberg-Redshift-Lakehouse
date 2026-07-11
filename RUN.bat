@@ -52,7 +52,7 @@ echo Next Steps:
 echo   1. Deploy AWS infrastructure: cd terraform ^&^& terraform apply
 echo   2. Download data: python scripts\download_kaggle_dataset.py
 echo   3. Upload to S3: python scripts\upload_to_s3.py
-echo   4. Run pipeline on Databricks
+echo   4. Run pipeline: spark-submit or Airflow DAG
 echo   5. Register metadata: python scripts\register_metadata.py
 echo.
 pause

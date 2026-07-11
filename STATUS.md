@@ -8,8 +8,7 @@
 
 ### Core Infrastructure (100%)
 - ✅ AWS S3 bucket (Terraform)
-- ✅ IAM roles and policies
-- ✅ Databricks on AWS setup
+- ✅ IAM roles and policies (Spark service user)
 - ✅ Configuration management
 
 ### Data Ingestion (100%)
@@ -51,7 +50,7 @@
 ### Phase 1: Testing & Validation
 1. Test Bronze ingestion with sample data
 2. Validate Silver transformations
-3. Run dbt on Databricks
+3. Run dbt via Spark Thrift
 4. Test warehouse API endpoints
 5. Validate metadata registration
 
@@ -100,8 +99,8 @@
 | Service | Monthly Cost |
 |---------|-------------|
 | AWS S3 (~2GB) | $0.05 |
-| Databricks on AWS | Trial (14-day) |
-| MongoDB Atlas (Free) | $0.00 |
+| Spark OSS (local dev) | $0.00 |
+| MongoDB (Docker local) | $0.00 |
 | **Total** | **~$0.05** |
 
 ---
@@ -114,7 +113,7 @@ None - ready for deployment
 
 ## 📝 Notes
 
-- Architecture simplified to AWS-only (removed GCP)
+- Architecture: pure AWS (Spark OSS + S3 + Iceberg), no Databricks
 - MongoDB used as metadata catalog only
 - DuckDB embedded (no separate server)
 - Total warehouse service: 300 lines as planned

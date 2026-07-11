@@ -4,6 +4,124 @@ Utility scripts for data management and operational tasks.
 
 ---
 
+## Quick Start (Local — No Cloud Required)
+
+### `setup_kaggle.py`
+Interactive Kaggle API setup and validation.
+
+```bash
+python scripts/setup_kaggle.py
+```
+
+Creates `~/.kaggle/`, guides credential setup, tests API authentication, validates competition access.
+
+### `download_kaggle_dataset.py`
+Download Instacart dataset from Kaggle (~1.3GB, 6 CSV files).
+
+```bash
+pip install kaggle
+python scripts/download_kaggle_dataset.py
+```
+
+**Output:** Raw CSV files in `data/raw/instacart/`
+
+### `explore_data_local.py`
+Comprehensive local data exploration and quality validation.
+
+```bash
+python scripts/explore_data_local.py
+```
+
+Analyzes file validation, reference tables, products hierarchy, order patterns, top products, and data quality summary.
+
+---
+
+## Cloud Deployment (Requires AWS S3 Setup)
+
+### `upload_to_s3.py`
+Upload CSV files from local to S3 raw layer.
+
+**Prerequisites:**
+- S3 bucket created (via Terraform)
+- AWS credentials configured (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+
+```bash
+python scripts/upload_to_s3.py
+```
+
+### `validate_iceberg_tables.py`
+Validate Iceberg tables exist and have data.
+
+```bash
+python scripts/validate_iceberg_tables.py --layer bronze
+python scripts/validate_iceberg_tables.py --layer silver
+```
+
+### `register_metadata.py`
+Register Gold layer table metadata to MongoDB catalog.
+
+```bash
+python scripts/register_metadata.py
+```
+
+Reads table stats (row count, schema, location) from Spark and writes metadata documents to MongoDB.
+
+---
+
+## Typical Workflow
+
+### Phase 1: Local Setup (No Cloud)
+```bash
+python scripts/setup_kaggle.py        # 1. Setup Kaggle API
+python scripts/download_kaggle_dataset.py  # 2. Download dataset
+python scripts/explore_data_local.py   # 3. Explore locally
+```
+
+### Phase 2: Cloud Pipeline
+```bash
+python scripts/upload_to_s3.py         # 4. Upload to S3
+
+# 5. Run Bronze ingestion
+spark-submit --master local[*] pyspark/bronze_ingestion.py
+python scripts/validate_iceberg_tables.py --layer bronze
+
+# 6. Run Silver transformation
+spark-submit --master local[*] pyspark/silver_transformation.py
+python scripts/validate_iceberg_tables.py --layer silver
+
+# 7. Run data quality checks
+spark-submit --master local[*] pyspark/data_quality_checks.py
+
+# 8. Run dbt (build dimensional model)
+cd dbt_instacart && dbt run --profiles-dir . --target prod
+cd dbt_instacart && dbt test --profiles-dir .
+
+# 9. Register metadata
+python scripts/register_metadata.py
+```
+
+---
+
+## Tips
+
+- **Start local first:** Run Phase 1 to understand data before cloud deployment
+- **Spark execution:** PySpark scripts run via `spark-submit --master local[*]` (local dev) or on EC2 (deploy)
+- **Validation scripts:** Can run locally with proper AWS credentials
+- **Incremental development:** Test each layer before proceeding to next
+
+---
+
+## Related Documentation
+
+- [QUICKSTART.md](../QUICKSTART.md) — 30-minute quickstart guide
+- [CODEBASE_WALKTHROUGH.md](../CODEBASE_WALKTHROUGH.md) — Full architecture walkthrough
+- [SETUP_GUIDE.md](../SETUP_GUIDE.md) — AWS + MongoDB setup
+# Scripts Directory
+
+Utility scripts for data management and operational tasks.
+
+---
+
 ## 🚀 Quick Start (Local - No Cloud Required)
 
 ### 1. `setup_kaggle.py` ⭐ NEW

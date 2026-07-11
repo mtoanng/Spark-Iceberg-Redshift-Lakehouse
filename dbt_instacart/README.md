@@ -1,3 +1,167 @@
+# Instacart Lakehouse — dbt Project
+
+dbt project for transforming Iceberg Silver layer data into a Gold dimensional model via **dbt-spark** (Thrift connection to Spark OSS).
+
+## Project Structure
+
+```
+dbt_instacart/
+├── models/
+│   ├── staging/                    # Views reading from Iceberg Silver
+│   │   ├── stg_orders.sql
+│   │   ├── stg_order_products.sql
+│   │   ├── stg_products.sql
+│   │   ├── stg_aisles.sql
+│   │   ├── stg_departments.sql
+│   │   └── schema.yml
+│   ├── marts/
+│   │   ├── dimensions/             # Dimension tables (Iceberg, SCD Type 1)
+│   │   │   ├── dim_product.sql
+│   │   │   └── dim_orders.sql
+│   │   ├── facts/                  # Fact tables (Iceberg)
+│   │   │   └── fct_order_products.sql
+│   │   ├── analytics/              # Business analytics views
+│   │   │   ├── mart_product_reorder_rate.sql
+│   │   │   └── mart_department_demand.sql
+│   │   └── schema.yml
+│   └── sources.yml                 # Iceberg Silver tables as sources + tests
+├── profiles.yml                    # Spark Thrift connection config
+├── packages.yml                    # dbt-utils dependency
+└── dbt_project.yml                 # Project configuration
+```
+
+## Setup
+
+### 1. Install dbt
+```bash
+pip install dbt-core dbt-spark[PyHive]
+```
+
+### 2. Configure Profile
+The profile uses **Spark Thrift** (not Databricks). Copy `profiles.yml` to `~/.dbt/` or use `--profiles-dir .`:
+
+```yaml
+instacart_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: spark
+      method: thrift
+      schema: gold
+      host: localhost
+      port: 1515
+    prod:
+      type: spark
+      method: thrift
+      schema: gold
+      host: "{{ env_var('SPARK_HOST', 'localhost') }}"
+      port: "{{ env_var('SPARK_PORT', '1515') }}"
+```
+
+### 3. Test Connection
+```bash
+dbt debug --profiles-dir .
+```
+
+## Usage
+
+### Run All Models
+```bash
+dbt run --profiles-dir . --target prod
+```
+
+### Run Specific Layers
+```bash
+dbt run --select staging --profiles-dir .
+dbt run --select marts.dimensions --profiles-dir .
+dbt run --select marts.facts --profiles-dir .
+dbt run --select marts.analytics --profiles-dir .
+```
+
+### Run Tests
+```bash
+dbt test --profiles-dir . --target prod
+```
+
+### Generate Documentation
+```bash
+dbt docs generate --profiles-dir .
+dbt docs serve --port 8002
+```
+
+## Data Flow
+
+```
+Iceberg Silver (S3, via Spark Thrift)
+    ↓
+Staging Models (views)
+    ↓
+Dimensional Model (Iceberg Gold tables)
+    ├── Dimensions (SCD Type 1)
+    └── Facts
+    ↓
+Analytics Marts (views over facts)
+```
+
+## Data Lineage
+
+### Sources (Iceberg Silver)
+- `silver.orders_enriched` → `stg_orders`
+- `silver.order_products_enriched` → `stg_order_products`
+- `silver.products_hierarchy` → `stg_products`
+- `silver.aisles` (Bronze) → `stg_aisles`
+- `silver.departments` (Bronze) → `stg_departments`
+
+### Staging → Dimensions
+- `stg_products` → `dim_product` (product_key, product_id, name, aisle, department)
+- `stg_orders` → `dim_orders` (order_key, order_id, user_id, day/hour metrics)
+
+### Staging → Facts
+- `stg_order_products` + `stg_orders` + `stg_products` → `fct_order_products` (grain: order_id × product_id)
+
+### Facts → Analytics
+- `fct_order_products` + `dim_product` → `mart_product_reorder_rate`
+- `fct_order_products` → `mart_department_demand`
+
+## Materialization Strategy
+
+| Layer | Materialization | Storage |
+|-------|----------------|---------|
+| Staging | View | None (computed on demand) |
+| Dimensions | Table | Iceberg on S3 |
+| Facts | Table | Iceberg on S3 |
+| Analytics | View | None (computed on demand) |
+
+## Testing Strategy
+
+1. **Schema Tests** (via `sources.yml` + `schema.yml`)
+   - `unique` / `not_null` on primary keys
+   - `accepted_values` for enum columns (day of week, hour of day, reordered flag)
+   - `relationships` for foreign keys
+
+2. **Source Freshness** (via `sources.yml`)
+   - Warn after 24h, error after 48h
+
+## Troubleshooting
+
+### Issue: Source table not found
+Verify Iceberg Silver tables exist:
+```bash
+python scripts/validate_iceberg_tables.py --layer silver
+```
+
+### Issue: Thrift connection refused
+Ensure Spark Thrift Server is running on port 1515:
+```bash
+# Start Spark Thrift Server
+$SPARK_HOME/sbin/start-thriftserver.sh --master local[*]
+```
+
+### Issue: dbt compilation error
+```bash
+dbt compile --select problematic_model --profiles-dir .
+# Check compiled SQL in target/compiled/
+```
 # Instacart Lakehouse - dbt Project
 
 dbt project for transforming Iceberg Silver layer data into BigQuery dimensional model.

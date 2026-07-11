@@ -1,3 +1,6 @@
+# Airflow image with Spark + Postgres providers for pipeline orchestration.
+# Used by docker-compose or standalone Airflow deployments.
+# (Not the Warehouse API — see Dockerfile.warehouse for that.)
 FROM apache/airflow:2.9.0
 
 USER airflow

@@ -1,6 +1,6 @@
 # Setup Guide - Instacart Lakehouse
 
-**Hybrid Cloud: AWS S3 + Databricks + GCP BigQuery**
+**AWS S3 + Spark OSS + MongoDB + DuckDB**
 
 ---
 
@@ -10,7 +10,7 @@
 python scripts/setup_kaggle.py && python scripts/download_kaggle_dataset.py
 cd terraform && terraform apply
 python scripts/upload_to_s3.py
-# Then run on Databricks
+# Then run pipeline via spark-submit or Airflow
 ```
 
 ---
@@ -24,7 +24,7 @@ python scripts/upload_to_s3.py
 
 ### Phase 2: Cloud Accounts (20 min)
 - AWS account (S3 free tier)
-- Databricks on AWS (trial via AWS Marketplace, 14-day)
+- Configure AWS credentials: `export AWS_ACCESS_KEY_ID=xxx`
 
 ### Phase 3: Infrastructure (10 min)
 ```bash
@@ -34,21 +34,31 @@ terraform init && terraform apply
 
 ### Phase 4: Upload Data (10 min)
 ```bash
-export AWS_ACCESS_KEY_ID=xxx
-export AWS_SECRET_ACCESS_KEY=xxx
 python scripts/upload_to_s3.py
 ```
 
-### Phase 5: Databricks (30 min)
-- Create cluster (Runtime 13.3 LTS)
-- Install libraries: Iceberg + hadoop-aws
-- Upload scripts to DBFS
-- Run: Bronze → Silver → Export
+### Phase 5: Spark Pipeline (30 min)
+```bash
+# Bronze ingestion
+spark-submit --master local[*] pyspark/bronze_ingestion.py
+
+# Silver transformation
+spark-submit --master local[*] pyspark/silver_transformation.py
+
+# Data quality checks
+spark-submit --master local[*] pyspark/data_quality_checks.py
+```
 
 ### Phase 6: dbt (15 min)
 ```bash
 cd dbt_instacart
-dbt run && dbt test
+dbt run --profiles-dir . --target prod && dbt test --profiles-dir .
+```
+
+### Phase 7: Warehouse API (5 min)
+```bash
+docker-compose up -d    # Starts MongoDB + Warehouse API
+curl http://localhost:8000/health
 ```
 
 ---
@@ -59,25 +69,28 @@ dbt run && dbt test
 # Check S3
 aws s3 ls s3://your-bucket/bronze/
 
-# Check BigQuery  
-bq query "SELECT COUNT(*) FROM instacart_lakehouse.fct_order_products"
+# Check Warehouse API
+curl http://localhost:8000/health
+curl http://localhost:8000/datasets
 ```
 
 ---
 
 ## Troubleshooting
 
-**Databricks can't read S3:**
+**Spark can't read S3:**
 ```python
-# Set credentials in notebook
-spark.conf.set("spark.hadoop.fs.s3a.access.key", "xxx")
-spark.conf.set("spark.hadoop.fs.s3a.secret.key", "xxx")
+# Ensure AWS credentials are set in environment
+export AWS_ACCESS_KEY_ID=xxx
+export AWS_SECRET_ACCESS_KEY=xxx
+# Or configure in config/instacart_config.py
 ```
 
-**BigQuery access denied:**
+**MongoDB connection refused:**
 ```bash
-# Verify service account permissions
-gcloud projects get-iam-policy your-project-id
+# Ensure Docker is running and MongoDB container is up
+docker-compose up -d mongodb
+docker-compose ps
 ```
 
 ---

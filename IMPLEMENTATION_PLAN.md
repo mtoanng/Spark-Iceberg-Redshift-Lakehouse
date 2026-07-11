@@ -1,5 +1,10 @@
 # Implementation Plan - Final Architecture
 
+> **DEPRECATED:** This is a historical planning document from the initial architecture design.
+> The project has since evolved: Databricks was replaced with Spark OSS, BigQuery was removed,
+> and Query Gateway + Data Contracts were added. See [CODEBASE_WALKTHROUGH.md](CODEBASE_WALKTHROUGH.md)
+> for the current architecture.
+
 **Status:** Architecture finalized, ready for implementation
 
 ---

@@ -84,6 +84,47 @@ class WarehouseClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def health(self) -> Dict[str, Any]:
+        """
+        Check detailed health status (DuckDB + MongoDB connectivity)
+        
+        Returns:
+            Dict with status ('healthy'/'degraded') and individual checks
+        """
+        response = self.session.get(f"{self.base_url}/health")
+        response.raise_for_status()
+        return response.json()
+
+    def query_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get recent query history
+        
+        Args:
+            limit: Maximum number of records (default 50)
+            
+        Returns:
+            List of query history records
+        """
+        response = self.session.get(
+            f"{self.base_url}/history", params={"limit": limit}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_contract(self, table: str) -> Dict[str, Any]:
+        """
+        Get data contract for a table (expectations: not_null, unique, etc.)
+        
+        Args:
+            table: Fully qualified table name (e.g., 'gold.fct_order_products')
+            
+        Returns:
+            Dict with table and expectations
+        """
+        response = self.session.get(f"{self.base_url}/contracts/{table}")
+        response.raise_for_status()
+        return response.json()
     
     def close(self):
         """Close HTTP session"""

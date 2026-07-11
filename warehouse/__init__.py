@@ -4,7 +4,7 @@ Warehouse service package
 
 from .engine import DuckDBEngine
 from .metadata import MetadataStore
-from .models import QueryRequest, QueryResponse, DatasetMetadata
+from .models import QueryRequest, QueryResponse, DatasetMetadata, DataContract
 from .sql_validator import validate_sql
 
 __all__ = [
@@ -13,5 +13,6 @@ __all__ = [
     "QueryRequest",
     "QueryResponse",
     "DatasetMetadata",
+    "DataContract",
     "validate_sql",
 ]
