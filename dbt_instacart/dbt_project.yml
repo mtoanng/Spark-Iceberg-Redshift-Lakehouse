@@ -37,12 +37,11 @@ models:
         +schema: gold
         +file_format: iceberg
       
-      # Facts - Materialize as Iceberg tables with partitioning
+      # Facts - Materialize as Iceberg tables
       facts:
         +materialized: table
         +schema: gold
         +file_format: iceberg
-        +partition_by: ['order_date']
       
       # Analytics - Materialize as views
       analytics:

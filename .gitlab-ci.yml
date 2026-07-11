@@ -1,0 +1,67 @@
+# GitLab CI/CD for Instacart Market Basket Analytics Platform
+#
+# Stages:
+#   1. warehouse-test  — runs pytest on warehouse service (sql_validator + cache)
+#   2. dbt-test         — runs dbt test against Spark Thrift (requires Spark connection)
+#   3. build-image      — builds the warehouse Docker image (optional)
+#
+# Per blueprint: "Thiếu credential cloud → hỏi người dùng, không tự bịa"
+# The dbt-test stage only runs when SPARK_HOST and SPARK_PORT
+# are available as CI/CD variables. Otherwise it is skipped.
+
+stages:
+  - warehouse-test
+  - dbt-test
+  - build-image
+
+# ───────────────────────────────────────────────────────────────
+# Stage 1: Warehouse Service Tests (local, no cloud needed)
+# ───────────────────────────────────────────────────────────────
+warehouse-test:
+  stage: warehouse-test
+  image: python:3.9-slim
+  before_script:
+    - pip install --no-cache-dir sqlglot pytest
+  script:
+    - cd warehouse
+    - python -m pytest tests/ -v --tb=short
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - when: on_success
+
+# ───────────────────────────────────────────────────────────────
+# Stage 2: dbt Tests (requires Spark Thrift connection)
+# ───────────────────────────────────────────────────────────────
+dbt-test:
+  stage: dbt-test
+  image: python:3.9-slim
+  before_script:
+    - pip install --no-cache-dir dbt-core dbt-spark dbt-utils
+  script:
+    - cd dbt_instacart
+    - dbt deps --profiles-dir .
+    - dbt test --profiles-dir . --target prod
+  rules:
+    # Only run when Spark connection details are provided as CI/CD variables
+    - if: $SPARK_HOST && $SPARK_PORT
+      when: on_success
+    - when: never  # Skip silently if no connection details
+  variables:
+    SPARK_PORT: $SPARK_PORT
+
+# ───────────────────────────────────────────────────────────────
+# Stage 3: Build Warehouse Docker Image (optional)
+# ───────────────────────────────────────────────────────────────
+build-warehouse-image:
+  stage: build-image
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  script:
+    - docker build -f Dockerfile.warehouse -t instacart-warehouse:latest .
+    - docker images | grep instacart-warehouse
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual  # Manual trigger only
+    - when: never

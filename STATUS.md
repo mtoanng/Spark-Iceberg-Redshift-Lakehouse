@@ -9,7 +9,7 @@
 ### Core Infrastructure (100%)
 - ✅ AWS S3 bucket (Terraform)
 - ✅ IAM roles and policies
-- ✅ Databricks Community setup
+- ✅ Databricks on AWS setup
 - ✅ Configuration management
 
 ### Data Ingestion (100%)
@@ -22,7 +22,7 @@
 - ✅ dbt project structure
 - ✅ dbt-spark configuration
 - ✅ Staging models
-- ✅ Dimensional models (dim_user, dim_product, dim_date)
+- ✅ Dimensional models (dim_product, dim_orders)
 - ✅ Fact models (fct_order_products)
 - ✅ dbt tests
 
@@ -100,7 +100,7 @@
 | Service | Monthly Cost |
 |---------|-------------|
 | AWS S3 (~2GB) | $0.05 |
-| Databricks Community | $0.00 |
+| Databricks on AWS | Trial (14-day) |
 | MongoDB Atlas (Free) | $0.00 |
 | **Total** | **~$0.05** |
 

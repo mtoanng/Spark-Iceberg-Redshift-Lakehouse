@@ -62,7 +62,7 @@ instacart:
     databricks:
       type: spark
       method: http
-      host: community.cloud.databricks.com
+      host: <workspace>.cloud.databricks.com
       token: "{{ env_var('DATABRICKS_TOKEN') }}"
       http_path: /sql/1.0/warehouses/xxxxx
       schema: gold

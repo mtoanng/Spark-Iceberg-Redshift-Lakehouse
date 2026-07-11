@@ -2,16 +2,13 @@
     config(
         materialized='table',
         schema='marts',
-        partition_by={
-            'field': 'order_date',
-            'data_type': 'date'
-        },
         cluster_by=['user_id', 'product_id']
     )
 }}
 
 -- Fact: Order-Product associations
--- Grain: One row per order-product combination
+-- Grain: One row per (order_id, product_id) combination
+-- This is the primary fact table — built directly from staging, not from other facts.
 
 with order_products as (
     select * from {{ ref('stg_order_products') }}
@@ -31,25 +28,22 @@ fact_base as (
         op.order_id,
         op.product_id,
         o.user_id,
-        
+
         -- Measures
         op.add_to_cart_order as cart_sequence,
-        case when op.reordered = 1 then true else false end as is_reordered,
-        
-        -- Degenerate dimensions
+        cast(op.reordered as int) as reordered,
+
+        -- Degenerate dimensions (from orders)
         o.order_number,
-        o.order_dow as day_of_week,
-        o.order_hour_of_day as hour_of_day,
+        o.order_dow,
+        o.order_hour_of_day,
         o.days_since_prior_order,
-        case when o.is_first_order then true else false end as is_first_order,
-        
-        -- Product attributes (for partitioning/clustering)
+        o.is_first_order,
+
+        -- Product attributes (for clustering / filtering)
         p.department_id,
-        p.aisle_id,
-        
-        -- Derived date (for partitioning)
-        date('2017-06-01') as order_date  -- Placeholder: Instacart doesn't have dates
-        
+        p.aisle_id
+
     from order_products op
     inner join orders o on op.order_id = o.order_id
     inner join products p on op.product_id = p.product_id
@@ -59,9 +53,9 @@ fct_order_products as (
     select
         -- Surrogate key
         {{ dbt_utils.generate_surrogate_key(['order_id', 'product_id']) }} as order_product_key,
-        
+
         *
-        
+
     from fact_base
 )
 

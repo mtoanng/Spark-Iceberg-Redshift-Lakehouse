@@ -9,30 +9,37 @@ models:
         tests:
           - unique
           - not_null
-      
+
       - name: user_id
         description: "User identifier"
         tests:
           - not_null
-  
+
+      - name: order_dow
+        description: "Day of week (0=Sunday, 6=Saturday)"
+        tests:
+          - accepted_values:
+              values: [0, 1, 2, 3, 4, 5, 6]
+
   - name: stg_order_products
-    description: "Staged order-product associations"
+    description: "Staged order-product associations (union of prior + train)"
     columns:
       - name: order_id
         description: "Order identifier"
         tests:
           - not_null
-      
+
       - name: product_id
         description: "Product identifier"
         tests:
           - not_null
-      
-      - name: product_name
-        description: "Product name"
+
+      - name: reordered
+        description: "Flag indicating if product was reordered (0 or 1)"
         tests:
-          - not_null
-  
+          - accepted_values:
+              values: [0, 1]
+
   - name: stg_products
     description: "Staged products with hierarchy"
     columns:
@@ -41,17 +48,31 @@ models:
         tests:
           - unique
           - not_null
-  
-  - name: stg_users
-    description: "Staged user summary metrics"
+
+  - name: stg_aisles
+    description: "Staged aisle reference data"
     columns:
-      - name: user_id
-        description: "Unique user identifier"
+      - name: aisle_id
+        description: "Unique aisle identifier"
         tests:
           - unique
           - not_null
-      
-      - name: total_orders
-        description: "Total orders placed"
+
+      - name: aisle
+        description: "Aisle name"
+        tests:
+          - not_null
+
+  - name: stg_departments
+    description: "Staged department reference data"
+    columns:
+      - name: department_id
+        description: "Unique department identifier"
+        tests:
+          - unique
+          - not_null
+
+      - name: department
+        description: "Department name"
         tests:
           - not_null

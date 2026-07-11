@@ -1,19 +1,21 @@
 """
-Airflow DAG - Instacart Lakehouse Pipeline
-Orchestrates the end-to-end data pipeline from raw CSV to Gold layer
+Airflow DAG - Instacart Market Basket Analytics Pipeline
+Orchestrates the end-to-end data pipeline from raw CSV to Gold layer.
 
 DAG Steps:
-1. Download CSV from Kaggle (manual/automated)
-2. Upload to S3 raw layer
-3. Bronze ingestion (Spark: CSV → Iceberg Bronze on S3)
-4. Silver transformation (Spark: Bronze → Iceberg Silver with cleaning)
-5. Data quality checks
-6. dbt run (Silver → Gold dimensional model on Databricks)
+1. Validate raw data exists in S3
+2. Upload to S3 raw layer (if needed)
+3. Bronze ingestion (Spark: CSV -> Iceberg Bronze on S3)
+4. Silver transformation (Spark: Bronze -> Iceberg Silver with cleaning)
+5. Market basket mining (OPTIONAL/BONUS: FPGrowth -> gold.market_basket_rules)
+6. dbt run + dbt test (Silver -> Gold dimensional model via dbt-spark)
 7. Register metadata to MongoDB catalog
+
+Compute: Spark OSS (local dev) or EC2 (deploy).
 
 Schedule: Weekly (every Monday at 2 AM)
 Author: Data Engineering Team
-Date: 2026-07-10
+Date: 2026-07-11
 """
 
 from datetime import datetime, timedelta
@@ -107,6 +109,21 @@ with TaskGroup('silver_transformation', tooltip='Silver layer transformation', d
     
     run_silver_transformation >> validate_silver_tables
 
+# Task: Market Basket Mining (OPTIONAL / BONUS — FPGrowth)
+# This is NOT a blocking dependency. If it fails or is skipped, the pipeline
+# still continues to dbt_build. The core Definition of Done requires only
+# dbt + Iceberg + DuckDB service to run.
+market_basket_mining = BashOperator(
+    task_id='market_basket_mining',
+    bash_command=(
+        'spark-submit '
+        '--master local[*] '
+        '--driver-memory 4g '
+        '{{ var.value.project_root }}/pyspark/market_basket_mining.py'
+    ),
+    dag=dag,
+)
+
 # Task Group: Data Quality Checks
 with TaskGroup('data_quality_checks', tooltip='Data quality validation', dag=dag) as dq_group:
     
@@ -119,8 +136,8 @@ with TaskGroup('data_quality_checks', tooltip='Data quality validation', dag=dag
         ),
     )
 
-# Task Group: dbt Run & Test (on Databricks)
-with TaskGroup('dbt_build', tooltip='dbt transformations on Databricks', dag=dag) as dbt_group:
+# Task Group: dbt Run & Test (via dbt-spark)
+with TaskGroup('dbt_build', tooltip='dbt transformations via dbt-spark', dag=dag) as dbt_group:
     
     dbt_deps = BashOperator(
         task_id='dbt_deps',
@@ -170,8 +187,10 @@ success_notification = BashOperator(
 # Define task dependencies
 check_raw_data >> upload_to_s3 >> bronze_group
 bronze_group >> silver_group
+silver_group >> market_basket_mining
 silver_group >> dq_group
 dq_group >> dbt_group
+market_basket_mining >> dbt_group
 dbt_group >> register_metadata >> generate_docs >> success_notification
 
 
@@ -183,5 +202,5 @@ Required Airflow Variables (set in Airflow UI):
 
 Example:
 airflow variables set s3_bucket "instacart-lakehouse"
-airflow variables set project_root "/home/user/Data-Migration-with-Spark-Airflow-Postgres"
+airflow variables set project_root "/home/user/Spark-Iceberg-DuckDB-Lakehouse"
 """

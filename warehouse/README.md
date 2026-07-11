@@ -57,9 +57,9 @@ GET /datasets
 Response:
 [
   {
-    "dataset_id": "gold.dim_user",
-    "table_name": "dim_user",
-    "row_count": 206209,
+    "dataset_id": "gold.dim_product",
+    "table_name": "dim_product",
+    "row_count": 49688,
     "updated_at": "2026-07-10T10:30:00Z"
   }
 ]
@@ -67,18 +67,18 @@ Response:
 
 **2. Get Dataset Metadata**
 ```bash
-GET /datasets/gold.dim_user
+GET /datasets/gold.dim_product
 
 Response:
 {
-  "dataset_id": "gold.dim_user",
+  "dataset_id": "gold.dim_product",
   "schema_name": "gold",
-  "table_name": "dim_user",
-  "row_count": 206209,
-  "location": "s3://instacart-lakehouse/gold/dim_user",
+  "table_name": "dim_product",
+  "row_count": 49688,
+  "location": "s3://instacart-lakehouse/gold/dim_product",
   "schema": [
-    {"name": "user_id", "type": "bigint"},
-    {"name": "total_orders", "type": "bigint"}
+    {"name": "product_id", "type": "int"},
+    {"name": "product_name", "type": "string"}
   ],
   "updated_at": "2026-07-10T10:30:00Z"
 }
@@ -90,18 +90,19 @@ POST /query
 Content-Type: application/json
 
 {
-  "sql": "SELECT * FROM gold.dim_user LIMIT 10"
+  "sql": "SELECT * FROM gold.dim_product LIMIT 10"
 }
 
 Response:
 {
-  "columns": ["user_id", "total_orders", "avg_basket_size"],
+  "columns": ["product_id", "product_name", "department"],
   "rows": [
-    [1, 10, 8.5],
-    [2, 15, 12.3]
+    [1, "Chocolate Sandwich Cookies", "snacks"],
+    [2, "All-Seasons Salt", "pantry"]
   ],
   "row_count": 10,
-  "execution_time_ms": 45.2
+  "execution_time_ms": 45.2,
+  "cache_hit": false
 }
 ```
 
@@ -117,10 +118,10 @@ client = WarehouseClient("http://localhost:8000")
 datasets = client.list_datasets()
 
 # Get metadata
-metadata = client.get_dataset("gold.dim_user")
+metadata = client.get_dataset("gold.dim_product")
 
 # Query and get DataFrame
-df = client.query("SELECT * FROM gold.dim_user LIMIT 100")
+df = client.query("SELECT * FROM gold.dim_product LIMIT 100")
 print(df.head())
 
 # Close
@@ -161,7 +162,7 @@ curl http://localhost:8000/
 curl http://localhost:8000/datasets
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"sql": "SELECT COUNT(*) FROM gold.dim_user"}'
+  -d '{"sql": "SELECT COUNT(*) FROM gold.fct_order_products"}'
 ```
 
 ## MongoDB Pattern
@@ -170,14 +171,14 @@ MongoDB stores **metadata only** (not business data):
 
 ```javascript
 {
-  "dataset_id": "gold.dim_user",
+  "dataset_id": "gold.dim_product",
   "schema_name": "gold",
-  "table_name": "dim_user",
-  "row_count": 206209,
-  "location": "s3://instacart-lakehouse/gold/dim_user",
+  "table_name": "dim_product",
+  "row_count": 49688,
+  "location": "s3://instacart-lakehouse/gold/dim_product",
   "schema": [
-    {"name": "user_id", "type": "bigint"},
-    {"name": "total_orders", "type": "bigint"}
+    {"name": "product_id", "type": "int"},
+    {"name": "product_name", "type": "string"}
   ],
   "table_format": "iceberg",
   "created_at": "2026-07-10T10:00:00Z",

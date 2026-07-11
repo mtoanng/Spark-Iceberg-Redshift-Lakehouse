@@ -82,10 +82,11 @@ def main():
     
     # Gold layer tables to register
     gold_tables = [
-        "dim_user",
         "dim_product",
-        "dim_date",
-        "fct_order_products"
+        "dim_orders",
+        "fct_order_products",
+        "mart_product_reorder_rate",
+        "mart_department_demand"
     ]
     
     registered = 0

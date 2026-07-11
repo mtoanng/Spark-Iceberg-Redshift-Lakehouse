@@ -67,7 +67,7 @@ AWS_REGION=us-east-1
 S3_BUCKET=instacart-lakehouse-xxxx
 
 # Databricks (bắt buộc)
-DATABRICKS_HOST=https://community.cloud.databricks.com
+DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
 DATABRICKS_TOKEN=dapi_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 DATABRICKS_CLUSTER_ID=xxxx-xxxxxx-xxxxxxx
 
@@ -130,7 +130,7 @@ curl http://localhost:8000/datasets
 Invoke-RestMethod -Method Post `
   -Uri http://localhost:8000/query `
   -ContentType "application/json" `
-  -Body '{"sql": "SELECT COUNT(*) FROM gold.dim_user"}'
+  -Body '{"sql": "SELECT COUNT(*) FROM gold.fct_order_products"}'
 ```
 
 ### Using Python
@@ -138,7 +138,7 @@ Invoke-RestMethod -Method Post `
 from warehouse.sdk import WarehouseClient
 
 client = WarehouseClient("http://localhost:8000")
-df = client.query("SELECT * FROM gold.dim_user LIMIT 10")
+df = client.query("SELECT * FROM gold.dim_product LIMIT 10")
 print(df)
 ```
 
@@ -368,7 +368,7 @@ docker-compose restart warehouse-api
 ## 📚 File Structure
 
 ```
-C:\...\Data-Migration-with-Spark-Airflow-Postgres\
+C:\...\Spark-Iceberg-DuckDB-Lakehouse\
 ├── .env                      # Your credentials (create from .env.example)
 ├── docker-compose.yml        # Service definitions
 ├── Dockerfile.warehouse      # API container build

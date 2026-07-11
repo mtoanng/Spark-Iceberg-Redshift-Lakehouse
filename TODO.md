@@ -93,8 +93,8 @@
 ## 📋 Phase 3: Databricks Setup (30 minutes)
 
 ### 3.1 Create Databricks Account
-- [ ] Go to: https://community.cloud.databricks.com/
-- [ ] Click "Sign Up" (FREE Community Edition)
+- [ ] Go to: AWS Marketplace → search "Databricks" → Start trial (14-day)
+- [ ] Click "Subscribe" / "Launch" (Databricks on AWS, NOT Community Edition)
 - [ ] Complete registration
 - [ ] Verify email
 - [ ] Sign in to workspace
@@ -135,7 +135,7 @@
 - [ ] Run: `databricks configure --token`
 - [ ] Enter:
   ```
-  Databricks Host: https://community.cloud.databricks.com
+  Databricks Host: https://<workspace>.cloud.databricks.com
   Token: [paste your token]
   ```
 - [ ] Test: `databricks clusters list` (should show your cluster)
@@ -230,7 +230,7 @@
   S3_BUCKET=instacart-lakehouse-xxxx  # From terraform output
   
   # Databricks
-  DATABRICKS_HOST=https://community.cloud.databricks.com
+  DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
   DATABRICKS_TOKEN=dapi_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
   DATABRICKS_CLUSTER_ID=xxxx-xxxxxx-xxxxxxx
   
@@ -477,13 +477,13 @@
   ```
 - [ ] Test get dataset:
   ```bash
-  curl http://localhost:8000/datasets/gold.dim_user
+  curl http://localhost:8000/datasets/gold.dim_product
   ```
 - [ ] Test query:
   ```bash
   curl -X POST http://localhost:8000/query \
     -H "Content-Type: application/json" \
-    -d '{"sql": "SELECT COUNT(*) FROM gold.dim_user"}'
+    -d '{"sql": "SELECT COUNT(*) FROM gold.fct_order_products"}'
   ```
 
 ### 8.5 Test Python SDK
@@ -498,7 +498,7 @@
   print(f"Datasets: {len(datasets)}")
   
   # Query
-  df = client.query("SELECT * FROM gold.dim_user LIMIT 10")
+  df = client.query("SELECT * FROM gold.dim_product LIMIT 10")
   print(df)
   
   client.close()
@@ -570,7 +570,7 @@
   client = WarehouseClient()
   
   # Expected counts
-  print("Orders:", client.query("SELECT COUNT(*) FROM gold.dim_user"))
+  print("Orders:", client.query("SELECT COUNT(*) FROM gold.dim_orders"))
   print("Products:", client.query("SELECT COUNT(*) FROM gold.dim_product"))
   ```
 
@@ -582,11 +582,12 @@
   ORDER BY total_orders DESC
   LIMIT 10
   ```
-- [ ] User segments:
+- [ ] Reorder rate by product:
   ```sql
-  SELECT user_segment, COUNT(*) as count
-  FROM gold.dim_user
-  GROUP BY user_segment
+  SELECT product_name, reorder_rate
+  FROM gold.mart_product_reorder_rate
+  ORDER BY reorder_rate DESC
+  LIMIT 10
   ```
 - [ ] Orders by day of week:
   ```sql
@@ -741,7 +742,7 @@ aws configure
 ## 📚 Helpful Resources
 
 - AWS S3 Console: https://s3.console.aws.amazon.com/
-- Databricks Community: https://community.cloud.databricks.com/
+- Databricks on AWS: https://aws.amazon.com/marketplace/serverless/amazon-databricks
 - MongoDB Atlas: https://cloud.mongodb.com/
 - Kaggle API Docs: https://www.kaggle.com/docs/api
 - dbt Docs: https://docs.getdbt.com/

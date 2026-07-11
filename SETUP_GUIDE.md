@@ -24,8 +24,7 @@ python scripts/upload_to_s3.py
 
 ### Phase 2: Cloud Accounts (20 min)
 - AWS account (S3 free tier)
-- GCP account (BigQuery free tier)
-- Databricks Community (free)
+- Databricks on AWS (trial via AWS Marketplace, 14-day)
 
 ### Phase 3: Infrastructure (10 min)
 ```bash

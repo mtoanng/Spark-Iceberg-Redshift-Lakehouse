@@ -283,7 +283,7 @@ quick-start: setup-env docker-up ## Quick start (setup + start services)
 	@echo "  2. Run: make tf-apply"
 	@echo "  3. Run: make download-data"
 	@echo "  4. Run: make upload-s3"
-	@echo "  5. Run pipeline on Databricks"
+	@echo "  5. Run pipeline (spark-submit or Airflow DAG)"
 	@echo "  6. Run: make register-metadata"
 
 full-pipeline: download-data upload-s3 dbt-run register-metadata ## Run full local pipeline
@@ -301,7 +301,7 @@ info: ## Show project information
 	@echo ""
 	@echo "Stack:"
 	@echo "  Storage:   AWS S3 (Iceberg)"
-	@echo "  Compute:   Databricks Community"
+	@echo "  Compute:   Spark OSS (local dev / EC2 deploy)"
 	@echo "  Transform: dbt-spark"
 	@echo "  Metadata:  MongoDB (Docker)"
 	@echo "  Query:     DuckDB (embedded)"

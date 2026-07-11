@@ -1,8 +1,38 @@
 version: 2
 
 sources:
+  - name: iceberg_bronze
+    description: "Iceberg Bronze layer tables (raw ingested from CSV)"
+    database: iceberg
+    schema: bronze
+
+    tables:
+      - name: aisles
+        description: "Raw aisle reference data"
+        columns:
+          - name: aisle_id
+            description: "Unique aisle identifier"
+            tests:
+              - unique
+              - not_null
+
+          - name: aisle
+            description: "Aisle name"
+
+      - name: departments
+        description: "Raw department reference data"
+        columns:
+          - name: department_id
+            description: "Unique department identifier"
+            tests:
+              - unique
+              - not_null
+
+          - name: department
+            description: "Department name"
+
   - name: iceberg_silver
-    description: "Iceberg Silver layer tables in Databricks"
+    description: "Iceberg Silver layer tables in Spark"
     database: iceberg
     schema: silver
     

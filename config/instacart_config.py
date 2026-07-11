@@ -24,11 +24,13 @@ S3_BUCKET = os.getenv("S3_BUCKET", "instacart-lakehouse")
 S3_RAW_PREFIX = "raw/instacart"
 S3_BRONZE_PREFIX = "bronze"
 S3_SILVER_PREFIX = "silver"
+S3_GOLD_PREFIX = "gold"
 
-# Full S3 URIs (s3a:// for Spark)
+# Full S3 URIs (s3a:// for Spark, s3:// for DuckDB)
 S3_RAW_PATH = f"s3a://{S3_BUCKET}/{S3_RAW_PREFIX}"
 S3_BRONZE_PATH = f"s3a://{S3_BUCKET}/{S3_BRONZE_PREFIX}"
 S3_SILVER_PATH = f"s3a://{S3_BUCKET}/{S3_SILVER_PREFIX}"
+S3_GOLD_PATH = f"s3://{S3_BUCKET}/{S3_GOLD_PREFIX}"  # DuckDB reads with s3://
 
 # =============================================================================
 # Instacart Dataset Files
@@ -53,27 +55,22 @@ EXPECTED_ROW_COUNTS = {
 }
 
 # =============================================================================
-# Apache Spark Configuration (Databricks Community Edition)
+# Apache Spark Configuration (Spark OSS — local dev / EC2 deploy)
 # =============================================================================
 SPARK_APP_NAME = "Instacart-Lakehouse"
 
-# Databricks Configuration
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "https://community.cloud.databricks.com")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN", "")
-DATABRICKS_CLUSTER_ID = os.getenv("DATABRICKS_CLUSTER_ID", "")
-
-# AWS Credentials for Databricks
+# AWS Credentials (read from environment)
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 
-# Spark Configs for Databricks Community + S3
+# Spark Configs for S3 + Iceberg
 SPARK_CONFIGS = {
     # Adaptive Query Execution
     "spark.sql.adaptive.enabled": "true",
     "spark.sql.adaptive.coalescePartitions.enabled": "true",
     "spark.sql.adaptive.skewJoin.enabled": "true",
     
-    # Shuffle Partitions (tuned for 1.3GB on Databricks Community)
+    # Shuffle Partitions (tuned for 1.3GB dataset)
     "spark.sql.shuffle.partitions": "50",
     "spark.default.parallelism": "8",
     
@@ -102,12 +99,6 @@ SPARK_CONFIGS = {
     "spark.sql.parquet.compression.codec": "snappy",
     "spark.io.compression.codec": "snappy",
 }
-
-# Databricks Libraries (to install via UI or API)
-DATABRICKS_LIBRARIES = [
-    {"maven": {"coordinates": "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.4.0"}},
-    {"maven": {"coordinates": "org.apache.hadoop:hadoop-aws:3.3.4"}},
-]
 
 # =============================================================================
 # Apache Iceberg Configuration

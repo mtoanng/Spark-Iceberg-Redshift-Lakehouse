@@ -36,7 +36,7 @@ class WarehouseClient:
         Get metadata for specific dataset
         
         Args:
-            dataset_id: Dataset identifier (e.g., 'gold.dim_user')
+            dataset_id: Dataset identifier (e.g., 'gold.dim_product')
             
         Returns:
             Dataset metadata dict
@@ -57,7 +57,7 @@ class WarehouseClient:
             
         Example:
             >>> client = WarehouseClient()
-            >>> df = client.query("SELECT * FROM gold.dim_user LIMIT 10")
+            >>> df = client.query("SELECT * FROM gold.dim_product LIMIT 10")
         """
         response = self.session.post(
             f"{self.base_url}/query",

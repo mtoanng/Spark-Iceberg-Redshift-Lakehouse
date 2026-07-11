@@ -46,3 +46,38 @@ class MetadataStore:
     def close(self):
         """Close MongoDB connection"""
         self.client.close()
+
+    # ---- Query History ----
+
+    def record_query(self, sql: str, duration_ms: float, row_count: int, cache_hit: bool):
+        """Record a query execution in history"""
+        self.db["query_history"].insert_one({
+            "sql": sql,
+            "duration_ms": duration_ms,
+            "row_count": row_count,
+            "cache_hit": cache_hit,
+            "executed_at": datetime.utcnow(),
+        })
+
+    def get_query_history(self, limit: int = 50):
+        """Get recent query history"""
+        return list(
+            self.db["query_history"]
+            .find({}, {"_id": 0})
+            .sort("executed_at", -1)
+            .limit(limit)
+        )
+
+    # ---- Data Contracts ----
+
+    def get_contract(self, table: str) -> Optional[Dict]:
+        """Get data contract for a table"""
+        return self.db["data_contracts"].find_one({"table": table})
+
+    def register_contract(self, contract: Dict):
+        """Register or update a data contract"""
+        self.db["data_contracts"].update_one(
+            {"table": contract["table"]},
+            {"$set": contract},
+            upsert=True,
+        )

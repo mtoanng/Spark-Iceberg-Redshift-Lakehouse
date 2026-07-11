@@ -22,7 +22,8 @@ RUN pip install --no-cache-dir \
     boto3 \
     pandas \
     requests \
-    python-dotenv
+    python-dotenv \
+    sqlglot
 
 # Copy application code
 COPY warehouse/ /app/warehouse/

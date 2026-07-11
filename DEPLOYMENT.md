@@ -43,7 +43,7 @@ zip -r instacart_pipeline.zip pyspark/ config/
 databricks fs cp instacart_pipeline.zip dbfs:/jobs/instacart_pipeline.zip
 
 # 3. Create job via API
-curl -X POST https://community.cloud.databricks.com/api/2.0/jobs/create \
+curl -X POST ${DATABRICKS_HOST}/api/2.0/jobs/create \
   -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
   -d '{
     "name": "Instacart Bronze Ingestion",

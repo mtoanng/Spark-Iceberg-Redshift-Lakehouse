@@ -9,7 +9,7 @@ from datetime import datetime
 
 class DatasetMetadata(BaseModel):
     """Metadata for a dataset in the catalog"""
-    dataset_id: str = Field(..., description="Unique dataset identifier (e.g., 'gold.dim_user')")
+    dataset_id: str = Field(..., description="Unique dataset identifier (e.g., 'gold.dim_product')")
     schema_name: str = Field(..., description="Schema/layer name (e.g., 'gold')")
     table_name: str = Field(..., description="Table name")
     description: Optional[str] = Field(None, description="Dataset description")
@@ -36,9 +36,19 @@ class QueryResponse(BaseModel):
     rows: List[List[Any]] = Field(..., description="Result rows")
     row_count: int = Field(..., description="Number of rows returned")
     execution_time_ms: float = Field(..., description="Query execution time in milliseconds")
+    cache_hit: bool = Field(default=False, description="Whether the result was served from in-process cache")
 
 
 class ErrorResponse(BaseModel):
     """Error response"""
     error: str
     detail: Optional[str] = None
+
+
+class DataContract(BaseModel):
+    """Data contract for a table — expectations that the pipeline validates against"""
+    table: str = Field(..., description="Fully qualified table name (e.g., 'gold.fct_order_products')")
+    expectations: Dict[str, Any] = Field(
+        ...,
+        description="Validation rules, e.g. {'not_null': ['order_id'], 'unique': ['order_id']}"
+    )

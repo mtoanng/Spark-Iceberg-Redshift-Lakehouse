@@ -73,7 +73,7 @@ curl http://localhost:8000/datasets
 # Test query
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"sql": "SELECT COUNT(*) FROM gold.dim_user"}'
+  -d '{"sql": "SELECT COUNT(*) FROM gold.fct_order_products"}'
 ```
 
 ---
@@ -262,12 +262,12 @@ curl http://localhost:8000/
 curl http://localhost:8000/datasets | jq
 
 # Get dataset metadata
-curl http://localhost:8000/datasets/gold.dim_user | jq
+curl http://localhost:8000/datasets/gold.dim_product | jq
 
 # Execute query
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"sql": "SELECT * FROM gold.dim_user LIMIT 5"}' | jq
+  -d '{"sql": "SELECT * FROM gold.dim_product LIMIT 5"}' | jq
 ```
 
 ### Test Python SDK
@@ -282,7 +282,7 @@ datasets = client.list_datasets()
 print(f"Found {len(datasets)} datasets")
 
 # Query
-df = client.query("SELECT * FROM gold.dim_user LIMIT 10")
+df = client.query("SELECT * FROM gold.dim_product LIMIT 10")
 print(df)
 ```
 

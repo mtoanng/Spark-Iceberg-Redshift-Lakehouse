@@ -239,7 +239,7 @@ def generate_summary_report():
     print(f"  ✓ Ready for Bronze ingestion")
     
     print(f"\n🎯 Next Steps:")
-    print(f"  1. Setup Databricks Community Edition")
+    print(f"  1. Setup Spark OSS (local dev or EC2)")
     print(f"  2. Setup S3 bucket and upload data")
     print(f"  3. Run Bronze ingestion (PySpark)")
     print(f"  4. Run Silver transformation")

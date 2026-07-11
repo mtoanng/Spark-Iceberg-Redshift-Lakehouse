@@ -8,7 +8,7 @@
 
 ### Prerequisites
 - AWS account with credentials
-- Databricks Community account
+- Databricks on AWS (trial via AWS Marketplace)
 - MongoDB Atlas account (free tier)
 - Python 3.9+ installed
 
@@ -109,7 +109,7 @@ uvicorn main:app --reload --port 8000
 from warehouse.sdk import WarehouseClient
 
 client = WarehouseClient()
-df = client.query("SELECT * FROM gold.dim_user LIMIT 10")
+df = client.query("SELECT * FROM gold.dim_product LIMIT 10")
 print(df)
 ```
 

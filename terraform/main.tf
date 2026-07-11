@@ -1,5 +1,5 @@
 # Instacart Lakehouse Infrastructure - AWS Only
-# AWS S3 (Iceberg storage) + Databricks Community (compute)
+# AWS S3 (Iceberg storage) + Spark OSS (compute)
 
 terraform {
   required_version = ">= 1.5.0"
@@ -88,25 +88,25 @@ resource "aws_s3_bucket_public_access_block" "lakehouse" {
   restrict_public_buckets = true
 }
 
-# IAM User for Databricks
-resource "aws_iam_user" "databricks" {
-  name = "${var.project_name}-databricks"
+# IAM User for Spark
+resource "aws_iam_user" "spark" {
+  name = "${var.project_name}-spark"
   
   tags = {
-    Name      = "Databricks Service User"
+    Name      = "Spark Service User"
     ManagedBy = "Terraform"
   }
 }
 
-# Access keys for Databricks
-resource "aws_iam_access_key" "databricks" {
-  user = aws_iam_user.databricks.name
+# Access keys for Spark
+resource "aws_iam_access_key" "spark" {
+  user = aws_iam_user.spark.name
 }
 
 # IAM Policy for S3 access
-resource "aws_iam_user_policy" "databricks_s3" {
+resource "aws_iam_user_policy" "spark_s3" {
   name = "S3LakehouseAccess"
-  user = aws_iam_user.databricks.name
+  user = aws_iam_user.spark.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -150,14 +150,14 @@ output "s3_bucket_arn" {
 }
 
 output "aws_access_key_id" {
-  description = "AWS access key for Databricks"
-  value       = aws_iam_access_key.databricks.id
+  description = "AWS access key for Spark"
+  value       = aws_iam_access_key.spark.id
   sensitive   = true
 }
 
 output "aws_secret_access_key" {
-  description = "AWS secret key for Databricks"
-  value       = aws_iam_access_key.databricks.secret
+  description = "AWS secret key for Spark"
+  value       = aws_iam_access_key.spark.secret
   sensitive   = true
 }
 
@@ -165,7 +165,7 @@ output "architecture_summary" {
   description = "Architecture summary"
   value = {
     storage  = "AWS S3 (${aws_s3_bucket.lakehouse.id})"
-    compute  = "Databricks Community Edition"
+    compute  = "Spark OSS (local dev / EC2 deploy)"
     format   = "Apache Iceberg (Bronze/Silver/Gold)"
     metadata = "MongoDB (catalog)"
     query    = "DuckDB (embedded)"

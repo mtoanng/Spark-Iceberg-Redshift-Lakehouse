@@ -10,6 +10,7 @@ import os
 from .models import QueryRequest, QueryResponse, DatasetMetadata, ErrorResponse
 from .engine import DuckDBEngine
 from .metadata import MetadataStore
+from .sql_validator import validate_sql
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -56,6 +57,24 @@ async def root():
     }
 
 
+@app.get("/health", tags=["Health"])
+async def health():
+    """Detailed health check — verifies DuckDB + MongoDB connectivity"""
+    checks = {"duckdb": False, "mongodb": False}
+    try:
+        duckdb_engine.conn.execute("SELECT 1")
+        checks["duckdb"] = True
+    except Exception:
+        pass
+    try:
+        metadata_store.db.command("ping")
+        checks["mongodb"] = True
+    except Exception:
+        pass
+    status = "healthy" if all(checks.values()) else "degraded"
+    return {"status": status, "checks": checks}
+
+
 @app.get("/datasets", response_model=List[Dict[str, Any]], tags=["Metadata"])
 async def list_datasets():
     """
@@ -79,7 +98,7 @@ async def get_dataset(dataset_id: str):
     Get detailed metadata for a specific dataset
     
     Args:
-        dataset_id: Dataset identifier (e.g., 'gold.dim_user')
+        dataset_id: Dataset identifier (e.g., 'gold.fct_order_products')
         
     Returns:
         Full dataset metadata including schema, statistics, lineage
@@ -98,6 +117,18 @@ async def get_dataset(dataset_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get dataset: {str(e)}")
 
 
+@app.get("/contracts/{table}", tags=["Metadata"])
+async def get_contract(table: str):
+    """
+    Get data contract for a table (expectations: not_null, unique, etc.)
+    """
+    contract = metadata_store.get_contract(table)
+    if not contract:
+        raise HTTPException(status_code=404, detail=f"No contract for '{table}'")
+    contract.pop("_id", None)
+    return contract
+
+
 @app.post("/query", response_model=QueryResponse, tags=["Query"])
 async def execute_query(request: QueryRequest):
     """
@@ -112,26 +143,47 @@ async def execute_query(request: QueryRequest):
     Example:
         POST /query
         {
-            "sql": "SELECT * FROM gold.dim_user LIMIT 10"
+            "sql": "SELECT * FROM gold.fct_order_products LIMIT 10"
         }
     """
     try:
-        # Simple validation: reject non-SELECT queries
-        sql_upper = request.sql.strip().upper()
-        if not sql_upper.startswith("SELECT") and not sql_upper.startswith("WITH"):
+        # AST-based validation: only SELECT/WITH queries pass.
+        # Uses sqlglot to parse the SQL tree — not naive string matching.
+        is_valid, reason = validate_sql(request.sql)
+        if not is_valid:
             raise HTTPException(
                 status_code=400,
-                detail="Only SELECT queries are allowed (read-only API)"
+                detail=f"Query rejected: {reason}"
             )
         
         # Execute query
         result = duckdb_engine.query(request.sql)
+        
+        # Record in query history
+        metadata_store.record_query(
+            request.sql,
+            result["execution_time_ms"],
+            result["row_count"],
+            result["cache_hit"],
+        )
+        
         return QueryResponse(**result)
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+
+
+@app.get("/history", tags=["Query"])
+async def query_history(limit: int = 50):
+    """
+    Get recent query history
+    
+    Args:
+        limit: Maximum number of records to return (default 50)
+    """
+    return metadata_store.get_query_history(limit)
 
 
 @app.exception_handler(Exception)

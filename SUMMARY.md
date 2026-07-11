@@ -197,11 +197,12 @@ print(f"Found {len(datasets)} datasets")
 # Query
 df = client.query("""
     SELECT 
-        user_segment,
-        COUNT(*) as user_count,
-        AVG(total_orders) as avg_orders
-    FROM gold.dim_user
-    GROUP BY user_segment
+        product_name,
+        total_order_lines,
+        reorder_rate
+    FROM gold.mart_product_reorder_rate
+    ORDER BY total_order_lines DESC
+    LIMIT 10
 """)
 print(df)
 ```
@@ -225,8 +226,8 @@ AWS:
 │   ├── silver/   (Iceberg)
 │   └── gold/     (Iceberg)
 │
-Databricks Community:
-├── Cluster (FREE)
+Databricks on AWS:
+├── Cluster (trial 14-day)
 ├── Bronze Job
 ├── Silver Job
 └── dbt Gold
@@ -246,7 +247,7 @@ CSV → S3 raw → PySpark (Bronze) → PySpark (Silver)
 | Service | Cost/Month |
 |---------|------------|
 | AWS S3 (~2GB) | $0.05 |
-| Databricks Community | FREE |
+| Databricks on AWS | Trial (14-day) |
 | MongoDB (Docker) | FREE |
 | DuckDB (embedded) | FREE |
 | FastAPI (Docker) | FREE |
