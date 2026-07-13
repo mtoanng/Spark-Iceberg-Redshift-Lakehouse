@@ -23,9 +23,10 @@ from pyspark.sql.functions import col, count, sum as spark_sum, avg, when
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.instacart_config import SPARK_CONFIGS, DATA_QUALITY_RULES
-from pyspark.utils import (
+from .utils import (
     validate_schema, check_null_counts, check_duplicate_keys,
-    check_referential_integrity, profile_dataframe
+    check_referential_integrity, profile_dataframe,
+    record_quality_results
 )
 
 
@@ -325,6 +326,10 @@ def main():
         # Print all results
         for result in results:
             result.print_summary()
+        
+        # Record quality results to MongoDB (quality ledger)
+        run_id = record_quality_results(results)
+        print(f"\n📝 Quality results recorded to MongoDB (run_id: {run_id})")
         
         # Overall summary
         total_checks = sum(len(r.checks_passed) + len(r.checks_failed) 

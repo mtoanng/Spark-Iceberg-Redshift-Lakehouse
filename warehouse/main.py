@@ -10,24 +10,26 @@ import os
 from .models import QueryRequest, QueryResponse, DatasetMetadata, ErrorResponse
 from .engine import DuckDBEngine
 from .metadata import MetadataStore
+from .metrics_engine import MetricsEngine
 from .sql_validator import validate_sql
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Instacart Data Warehouse API",
-    description="Simple SQL query API for Iceberg Gold layer",
-    version="1.0.0"
+    description="Simple SQL query API for Iceberg Gold layer with Metrics Store",
+    version="2.0.0"
 )
 
 # Initialize engines (singleton pattern)
 duckdb_engine = None
 metadata_store = None
+metrics_engine = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize engines on startup"""
-    global duckdb_engine, metadata_store
+    global duckdb_engine, metadata_store, metrics_engine
 
     # Load row limit from config (with fallback)
     try:
@@ -43,6 +45,7 @@ async def startup_event():
         uri=os.getenv("MONGODB_URI", "mongodb://localhost:27017"),
         database=os.getenv("MONGODB_DATABASE", "instacart_metadata")
     )
+    metrics_engine = MetricsEngine(metadata_store, duckdb_engine)
 
 
 @app.on_event("shutdown")
@@ -218,6 +221,236 @@ async def global_exception_handler(request, exc):
     )
 
 
+# ========================================
+# METRICS STORE ENDPOINTS
+# ========================================
+
+@app.post("/metrics", tags=["Metrics"], status_code=201)
+async def register_metric(metric_def: Dict[str, Any]):
+    """
+    Register a new business metric definition in MongoDB
+    
+    This allows you to define reusable business logic as SQL templates
+    that can be executed with parameters at runtime.
+    
+    **Request Body Example:**
+    ```json
+    {
+        "metric_name": "avg_basket_size_by_hour",
+        "display_name": "Average Basket Size by Hour",
+        "description": "Average number of products per order by hour of day",
+        "sql_template": "SELECT order_hour_of_day, AVG(products_per_order) as avg_basket_size FROM gold.dim_orders GROUP BY 1 ORDER BY 1",
+        "materialization": "table",
+        "refresh_schedule": "0 6 * * *",
+        "tags": ["basket", "hourly", "behavior"],
+        "owner": "analytics-team"
+    }
+    ```
+    
+    **Parameters:**
+    - `metric_name` (required): Unique identifier for the metric
+    - `sql_template` (required): SQL query, can include {param} placeholders
+    - `display_name` (optional): Human-readable name
+    - `description` (optional): What the metric measures
+    - `materialization` (optional): 'table' or 'view', default 'table'
+    - `refresh_schedule` (optional): Cron expression for scheduled refresh
+    - `parameters` (optional): List of parameter definitions
+    - `tags` (optional): Tags for categorization
+    - `owner` (optional): Team/person responsible
+    - `depends_on` (optional): List of upstream dependencies
+    """
+    try:
+        metric_name = metrics_engine.register_metric(metric_def)
+        return {
+            "status": "registered",
+            "metric_name": metric_name,
+            "message": f"Metric '{metric_name}' registered successfully"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to register metric: {str(e)}")
+
+
+@app.get("/metrics", tags=["Metrics"])
+async def list_metrics(tags: str = None, owner: str = None):
+    """
+    List all registered business metrics
+    
+    **Query Parameters:**
+    - `tags`: Comma-separated list of tags to filter by (OR logic)
+    - `owner`: Filter by owner
+    
+    **Example:**
+    ```
+    GET /metrics?tags=basket,hourly&owner=analytics-team
+    ```
+    """
+    try:
+        tag_list = tags.split(",") if tags else None
+        metrics = metrics_engine.list_metrics(tags=tag_list, owner=owner)
+        return {
+            "count": len(metrics),
+            "metrics": metrics
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list metrics: {str(e)}")
+
+
+@app.get("/metrics/{metric_name}", tags=["Metrics"])
+async def get_metric(metric_name: str):
+    """
+    Get full metric definition including execution history
+    
+    **Example:**
+    ```
+    GET /metrics/avg_basket_size_by_hour
+    ```
+    
+    Returns complete metric definition with:
+    - SQL template
+    - Parameters
+    - Last execution status
+    - Execution history
+    """
+    try:
+        metric = metrics_engine.get_metric(metric_name)
+        if not metric:
+            raise HTTPException(status_code=404, detail=f"Metric '{metric_name}' not found")
+        return metric
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get metric: {str(e)}")
+
+
+@app.post("/metrics/{metric_name}/execute", tags=["Metrics"])
+async def execute_metric(metric_name: str, parameters: Dict[str, Any] = None):
+    """
+    Execute a metric and materialize results in DuckDB
+    
+    **Path Parameter:**
+    - `metric_name`: Metric identifier
+    
+    **Request Body (optional):**
+    ```json
+    {
+        "min_orders": 100,
+        "limit": 20
+    }
+    ```
+    
+    Executes the metric's SQL template with provided parameters,
+    materializes results as a table/view in DuckDB, and tracks
+    execution history in MongoDB.
+    
+    **Example:**
+    ```
+    POST /metrics/top_reordered_products/execute
+    {
+        "min_orders": 100,
+        "limit": 20
+    }
+    ```
+    """
+    try:
+        result = metrics_engine.execute_metric(metric_name, parameters)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Execution failed: {str(e)}")
+
+
+@app.delete("/metrics/{metric_name}", tags=["Metrics"])
+async def delete_metric(metric_name: str):
+    """
+    Delete a metric definition and its materialized table/view
+    
+    **Example:**
+    ```
+    DELETE /metrics/avg_basket_size_by_hour
+    ```
+    """
+    try:
+        deleted = metrics_engine.delete_metric(metric_name)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Metric '{metric_name}' not found")
+        return {
+            "status": "deleted",
+            "metric_name": metric_name,
+            "message": f"Metric '{metric_name}' deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete metric: {str(e)}")
+
+
+@app.get("/metrics/{metric_name}/lineage", tags=["Metrics"])
+async def get_metric_lineage(metric_name: str):
+    """
+    Get metric lineage (upstream dependencies and downstream dependents)
+    
+    **Example:**
+    ```
+    GET /metrics/revenue_growth/lineage
+    ```
+    
+    Returns:
+    ```json
+    {
+        "metric_name": "revenue_growth",
+        "upstream": ["metric.monthly_revenue"],
+        "downstream": ["metric.revenue_forecast"]
+    }
+    ```
+    """
+    try:
+        lineage = metrics_engine.get_lineage(metric_name)
+        return lineage
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get lineage: {str(e)}")
+
+
+@app.post("/metrics/refresh", tags=["Metrics"])
+async def refresh_metrics(tags: str = None):
+    """
+    Refresh all metrics (or filtered by tags)
+    
+    **Query Parameters:**
+    - `tags`: Comma-separated list of tags to filter metrics
+    
+    **Example:**
+    ```
+    POST /metrics/refresh?tags=daily,basket
+    ```
+    
+    Executes all matching metrics and returns summary of results.
+    """
+    try:
+        tag_list = tags.split(",") if tags else None
+        results = metrics_engine.refresh_all(tags=tag_list)
+        
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        failed_count = len(results) - success_count
+        
+        return {
+            "status": "completed",
+            "total": len(results),
+            "success": success_count,
+            "failed": failed_count,
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh metrics: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

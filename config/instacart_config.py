@@ -171,7 +171,8 @@ MONGODB_COLLECTIONS = {
     "schemas": "schemas",             # Schema definitions
     "statistics": "statistics",       # Dataset statistics
     "quality": "quality_metrics",     # Quality scores
-    "lineage": "lineage"              # Data lineage tracking
+    "lineage": "lineage",             # Data lineage tracking
+    "quality_results": "quality_results"  # Pipeline quality check results (written by PySpark)
 }
 
 # =============================================================================

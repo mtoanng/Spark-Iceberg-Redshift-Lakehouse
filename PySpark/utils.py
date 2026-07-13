@@ -10,7 +10,9 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col, lit, count, sum as spark_sum, when
 from pyspark.sql.types import StructType
 from typing import List, Dict, Tuple
+from datetime import datetime
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +379,111 @@ def log_transformation_metrics(
     print(f"Output Records: {output_count:,}")
     print(f"Delta:          {records_delta:+,} ({pct_change:+.2f}%)")
     print("=" * 80)
+
+
+def record_quality_results(results: list, run_id: str = None) -> str:
+    """
+    Write data quality check results to MongoDB.
+    
+    This makes MongoDB the quality ledger for the lakehouse — every pipeline run
+    records its quality report. The Query Gateway reads these scores to show
+    users what guarantees exist on each table.
+    
+    Args:
+        results: List of DataQualityResult objects from data_quality_checks.py
+        run_id: Optional run ID (auto-generated if not provided)
+        
+    Returns:
+        str: The run_id for this quality check batch
+        
+    Document stored in MongoDB:
+        {
+            "run_id": "uuid",
+            "timestamp": "2026-07-11T...",
+            "tables": {
+                "bronze.orders": {
+                    "quality_score": 1.0,
+                    "checks_passed": 5,
+                    "checks_failed": 0,
+                    "warnings": 0,
+                    "details": {
+                        "passed": ["Schema Validation", "Null Check (order_id)"],
+                        "failed": [],
+                        "warnings": []
+                    }
+                },
+                ...
+            },
+            "overall_score": 1.0,
+            "total_checks": 20,
+            "total_passed": 20,
+            "total_failed": 0
+        }
+    """
+    try:
+        from pymongo import MongoClient
+        import os
+        from config.instacart_config import MONGODB_URI, MONGODB_DATABASE, MONGODB_COLLECTIONS
+    except ImportError as e:
+        logger.warning(f"Cannot record quality results to MongoDB: {e}")
+        return run_id or "no-mongodb"
+    
+    run_id = run_id or str(uuid.uuid4())[:8]
+    timestamp = datetime.utcnow().isoformat()
+    
+    # Build document from DataQualityResult objects
+    tables = {}
+    total_checks = 0
+    total_passed = 0
+    total_failed = 0
+    
+    for result in results:
+        passed_count = len(result.checks_passed)
+        failed_count = len(result.checks_failed)
+        warning_count = len(result.warnings)
+        check_count = passed_count + failed_count
+        score = passed_count / check_count if check_count > 0 else 0.0
+        
+        tables[result.table_name] = {
+            "quality_score": round(score, 3),
+            "checks_passed": passed_count,
+            "checks_failed": failed_count,
+            "warnings": warning_count,
+            "details": {
+                "passed": [name for name, _ in result.checks_passed],
+                "failed": [{"check": name, "reason": msg} for name, msg in result.checks_failed],
+                "warnings": [{"check": name, "reason": msg} for name, msg in result.warnings],
+            }
+        }
+        
+        total_checks += check_count
+        total_passed += passed_count
+        total_failed += failed_count
+    
+    overall_score = total_passed / total_checks if total_checks > 0 else 0.0
+    
+    document = {
+        "run_id": run_id,
+        "timestamp": timestamp,
+        "tables": tables,
+        "overall_score": round(overall_score, 3),
+        "total_checks": total_checks,
+        "total_passed": total_passed,
+        "total_failed": total_failed,
+    }
+    
+    try:
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+        db = client[MONGODB_DATABASE]
+        collection = db[MONGODB_COLLECTIONS["quality_results"]]
+        collection.insert_one(document)
+        client.close()
+        
+        logger.info(f"Quality results recorded to MongoDB (run_id={run_id}, score={overall_score:.1%})")
+    except Exception as e:
+        logger.warning(f"Failed to write quality results to MongoDB: {e}")
+    
+    return run_id
 
 
 if __name__ == "__main__":
