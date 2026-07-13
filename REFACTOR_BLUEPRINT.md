@@ -400,11 +400,15 @@ SELECT
     p.aisle_id,
     p.department_id
 FROM {{ ref('stg_order_products') }} op
-JOIN {{ ref('stg_orders') }} o USING (order_id)
-JOIN {{ ref('stg_products') }} p USING (product_id)
+JOIN {{ ref('stg_orders') }} o ON op.order_id = o.order_id
+JOIN {{ ref('stg_products') }} p ON op.product_id = p.product_id
 ```
 
-**Note:** Added explicit aliases (op., o., p.) and included `user_id` + `eval_set` columns required for ML feature engineering.
+**CRITICAL BUG FIX:** 
+- Added explicit table aliases (op., o., p.) to avoid ambiguous column errors
+- Included `user_id` column - **REQUIRED** for Phase 6 ML feature engineering join
+- Included `eval_set` column - **REQUIRED** to filter training vs test data
+- Changed USING to explicit ON clauses for clarity
 
 **Acceptance:**
 - [ ] `dbt run` creates 10 models
@@ -1064,8 +1068,8 @@ WITH user_stats AS (
         user_id,
         COUNT(DISTINCT order_id) as user_total_orders,
         AVG(days_since_prior_order) as user_avg_days_between_orders,
-        AVG(order_hour_of_day) as user_avg_order_hour,
-        MODE() WITHIN GROUP (ORDER BY order_dow) as user_favorite_dow
+        AVG(order_hour_of_day) as user_avg_order_hour
+        -- NOTE: user_favorite_dow removed (MODE() not standard in Spark SQL)
     FROM {{ ref('dim_orders') }}
     GROUP BY user_id
 ),
@@ -1115,7 +1119,6 @@ final_features AS (
         us.user_total_orders,
         us.user_avg_days_between_orders,
         us.user_avg_order_hour,
-        us.user_favorite_dow,
         
         -- Product features
         ps.product_total_orders,
@@ -1197,7 +1200,6 @@ FEATURE_COLS = [
     'user_total_orders',
     'user_avg_days_between_orders',
     'user_avg_order_hour',
-    'user_favorite_dow',
     'product_total_orders',
     'product_reorder_rate',
     'product_avg_cart_position',

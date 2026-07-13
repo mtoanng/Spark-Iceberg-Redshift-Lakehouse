@@ -1,18 +1,12 @@
 """
-Warehouse service package
+Warehouse Plane - Query service and recommendation store
+
+Components:
+- api/ - FastAPI application
+- engine/ - DuckDB query engine
+- parser/ - SQL validator
+- recommendation_store.py - MongoDB client
+- sdk/ - Client SDKs
 """
 
-from .engine import DuckDBEngine
-from .metadata import MetadataStore
-from .models import QueryRequest, QueryResponse, DatasetMetadata, DataContract
-from .sql_validator import validate_sql
-
-__all__ = [
-    "DuckDBEngine",
-    "MetadataStore",
-    "QueryRequest",
-    "QueryResponse",
-    "DatasetMetadata",
-    "DataContract",
-    "validate_sql",
-]
+__version__ = "1.0.0"
