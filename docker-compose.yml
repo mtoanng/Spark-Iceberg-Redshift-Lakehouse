@@ -1,17 +1,18 @@
 version: '3.8'
 
 services:
-  # MongoDB - Metadata Catalog
+  # MongoDB - Recommendation Store (INTERNAL ONLY - no port mapping)
   mongodb:
     image: mongo:7.0
     container_name: instacart-mongodb
     restart: unless-stopped
-    ports:
-      - "27017:27017"
+    # NO PORT MAPPING - internal only, accessed via warehouse-api
+    # ports:
+    #   - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
-      MONGO_INITDB_DATABASE: instacart_metadata
+      MONGO_INITDB_DATABASE: instacart_warehouse
     volumes:
       - mongodb-data:/data/db
       - ./mongo-init:/docker-entrypoint-initdb.d
@@ -33,9 +34,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # MongoDB connection
+      # MongoDB connection (internal only)
       MONGODB_URI: mongodb://admin:admin123@mongodb:27017/
-      MONGODB_DATABASE: instacart_metadata
+      MONGODB_DATABASE: instacart_warehouse
       
       # AWS credentials (for S3 access)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}

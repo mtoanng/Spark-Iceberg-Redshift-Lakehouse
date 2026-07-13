@@ -26,7 +26,7 @@ Date: 2026-07-13
 """
 
 from pymongo import MongoClient
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from datetime import datetime
 import os
 
@@ -118,6 +118,41 @@ class RecommendationStore:
             },
             upsert=True
         )
+    
+    def bulk_upsert_recommendations(self, recommendations: List[Dict]) -> None:
+        """
+        Bulk upsert recommendations (more efficient than individual upserts)
+        
+        Args:
+            recommendations: List of recommendation documents
+                Each doc should have: user_id, products, model_version, generated_at
+                
+        Example:
+            store.bulk_upsert_recommendations([
+                {
+                    "user_id": 12345,
+                    "products": [...],
+                    "model_version": "xgboost_v1",
+                    "generated_at": datetime.utcnow()
+                },
+                ...
+            ])
+        """
+        from pymongo import UpdateOne
+        
+        operations = []
+        for rec in recommendations:
+            operations.append(
+                UpdateOne(
+                    {'user_id': rec['user_id']},
+                    {'$set': rec},
+                    upsert=True
+                )
+            )
+        
+        if operations:
+            result = self._collection.bulk_write(operations, ordered=False)
+            # Note: ordered=False allows MongoDB to continue on errors
     
     def count_users(self) -> int:
         """Count total users with recommendations"""
