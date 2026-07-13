@@ -1,0 +1,35 @@
+# dbt Profile for AWS Glue
+# Adapted from dbt-spark (Databricks) to dbt-glue
+
+instacart_lakehouse:
+  target: glue
+  outputs:
+    glue:
+      type: glue
+      query-comment: "dbt-glue"
+      role_arn: "{{ env_var('GLUE_ROLE_ARN') }}"
+      region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+      workers: 2
+      worker_type: G.1X
+      schema: gold
+      database: instacart_lakehouse
+      session_provisioning_timeout_in_seconds: 120
+      location: "{{ env_var('DBT_GLUE_STAGING', 's3://instacart-lakehouse/dbt-glue-staging/') }}"
+      
+      # Iceberg configuration
+      conf:
+        spark.sql.catalog.glue_catalog: org.apache.iceberg.spark.SparkCatalog
+        spark.sql.catalog.glue_catalog.catalog-impl: org.apache.iceberg.aws.glue.GlueCatalog
+    
+    # Local development (optional, for dbt compile/parse only)
+    dev:
+      type: glue
+      query-comment: "dbt-glue-dev"
+      role_arn: "{{ env_var('GLUE_ROLE_ARN') }}"
+      region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+      workers: 2
+      worker_type: G.1X
+      schema: gold
+      database: instacart_lakehouse_dev
+      session_provisioning_timeout_in_seconds: 120
+      location: "{{ env_var('DBT_GLUE_STAGING', 's3://instacart-lakehouse/dbt-glue-staging-dev/') }}"

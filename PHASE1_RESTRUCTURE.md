@@ -72,11 +72,37 @@
 - [ ] Update docker-compose.yml (MongoDB internal only, use env vars)
 - [ ] Update .env.example (add MONGO_USER, MONGO_PASSWORD)
 
-### 7. Create dbt Models (Phase 2)
-- [ ] Copy existing dbt_instacart/ to etl/dbt_project/
-- [ ] Update profiles.yml for dbt-glue
-- [ ] Create corrected fct_order_products.sql
-- [ ] Create mart_user_product_features.sql
+### 7. ✅ COMPLETED: Create dbt Models (Phase 2)
+- [x] Copy existing dbt_instacart/ to etl/dbt_project/
+- [x] Update dbt_project.yml for dbt-glue
+- [x] Update profiles.yml for AWS Glue interactive sessions
+- [x] Update sources.yml (iceberg → glue_catalog)
+- [x] Update all staging models (iceberg_bronze/silver → glue_bronze/silver)
+- [x] Create corrected fct_order_products.sql (with user_id, eval_set)
+- [x] Create mart_user_product_features.sql (with train_labels CTE fix, no MODE())
+- [x] Create models/marts/ml/ directory
+- [x] Create comprehensive README.md
+
+## ✅ PHASE 2 COMPLETE
+
+**Total Models:** 10 dbt models
+- 5 staging views
+- 2 dimension tables
+- 1 fact table
+- 2 analytics views
+- 1 ML feature table (NEW)
+
+**Bug Fixes Verified:**
+- ✅ fct_order_products includes user_id, eval_set
+- ✅ mart_user_product_features uses train_labels CTE with LEFT JOIN
+- ✅ MODE() function removed (user_favorite_dow)
+- ✅ All catalog references updated to glue_catalog
+
+---
+
+## ⏳ Next Steps
+
+### 8. Phase 3: AWS Glue + Terraform (4-6 hours)
 
 ---
 
