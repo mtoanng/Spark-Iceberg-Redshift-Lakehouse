@@ -3,7 +3,7 @@
 # Glue Service Role
 resource "aws_iam_role" "glue_service_role" {
   name = "AWSGlueServiceRole-${var.project_name}"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -16,7 +16,7 @@ resource "aws_iam_role" "glue_service_role" {
       }
     ]
   })
-  
+
   tags = {
     Name = "glue-service-role"
   }
@@ -32,7 +32,7 @@ resource "aws_iam_role_policy_attachment" "glue_service_policy" {
 resource "aws_iam_role_policy" "glue_s3_policy" {
   name = "GlueS3AccessPolicy"
   role = aws_iam_role.glue_service_role.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -57,7 +57,7 @@ resource "aws_iam_role_policy" "glue_s3_policy" {
 resource "aws_iam_role_policy" "glue_catalog_policy" {
   name = "GlueCatalogAccessPolicy"
   role = aws_iam_role.glue_service_role.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -88,7 +88,7 @@ resource "aws_iam_role_policy" "glue_catalog_policy" {
 resource "aws_iam_role_policy" "glue_cloudwatch_policy" {
   name = "GlueCloudWatchLogsPolicy"
   role = aws_iam_role.glue_service_role.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -109,20 +109,20 @@ resource "aws_iam_role_policy" "glue_cloudwatch_policy" {
 # Allows DuckDB to read Iceberg tables via Glue Catalog
 resource "aws_iam_role" "duckdb_role" {
   name = "DuckDBGlueCatalogRole-${var.project_name}"
-  
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect = "Allow"
         Principal = {
-          Service = "ec2.amazonaws.com"  # Adjust based on where DuckDB runs
+          Service = "ec2.amazonaws.com" # Adjust based on where DuckDB runs
         }
         Action = "sts:AssumeRole"
       }
     ]
   })
-  
+
   tags = {
     Name = "duckdb-catalog-role"
   }
@@ -132,7 +132,7 @@ resource "aws_iam_role" "duckdb_role" {
 resource "aws_iam_role_policy" "duckdb_s3_policy" {
   name = "DuckDBS3ReadPolicy"
   role = aws_iam_role.duckdb_role.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -155,7 +155,7 @@ resource "aws_iam_role_policy" "duckdb_s3_policy" {
 resource "aws_iam_role_policy" "duckdb_catalog_policy" {
   name = "DuckDBCatalogReadPolicy"
   role = aws_iam_role.duckdb_role.id
-  
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

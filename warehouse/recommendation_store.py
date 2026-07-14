@@ -17,7 +17,7 @@ Document Schema:
         {"product_id": 202, "product_name": "Organic Milk", "score": 0.87},
         ...
     ],
-    "model_version": "xgboost_v1",
+    "model_version": "spark_logistic_regression_v1",
     "generated_at": ISODate("2026-07-13T10:30:00Z")
 }
 
@@ -37,7 +37,7 @@ class RecommendationStore:
     
     Features:
     - Store top-N product recommendations per user
-    - Pre-computed by ML model (XGBoost reorder prediction)
+    - Pre-computed by Spark ML recommendation job
     - Read-only from API perspective (writes happen in ETL)
     - Indexed by user_id for fast lookup
     """
@@ -87,7 +87,7 @@ class RecommendationStore:
         self,
         user_id: int,
         products: List[Dict],
-        model_version: str = "xgboost_v1"
+        model_version: str = "spark_logistic_regression_v1"
     ) -> None:
         """
         Insert or update recommendations for a user
@@ -104,7 +104,7 @@ class RecommendationStore:
                     {"product_id": 101, "product_name": "Banana", "score": 0.92},
                     {"product_id": 202, "product_name": "Milk", "score": 0.87}
                 ],
-                model_version="xgboost_v1"
+                model_version="spark_logistic_regression_v1"
             )
         """
         self._collection.update_one(
@@ -132,7 +132,7 @@ class RecommendationStore:
                 {
                     "user_id": 12345,
                     "products": [...],
-                    "model_version": "xgboost_v1",
+                    "model_version": "spark_logistic_regression_v1",
                     "generated_at": datetime.utcnow()
                 },
                 ...

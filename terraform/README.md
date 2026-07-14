@@ -186,11 +186,24 @@ cd ../etl/dbt_project
 
 # Set environment variables
 export GLUE_ROLE_ARN=$(cd ../../terraform && terraform output -raw glue_role_arn)
-export AWS_REGION="us-east-1"
-export DBT_GLUE_STAGING="s3://$(cd ../../terraform && terraform output -raw s3_bucket_name)/dbt-glue-staging/"
+export AWS_REGION=$(cd ../../terraform && terraform output -raw aws_region)
+export S3_GOLD_PATH=$(cd ../../terraform && terraform output -raw s3_gold_path)
+export GLUE_DATABASE=$(cd ../../terraform && terraform output -raw glue_database_name)
 
 # Run dbt
 dbt run --profiles-dir . --target glue
+```
+
+### 5. Run Spark ML Recommendations
+
+Pass the MongoDB Atlas URI at run time so it is not stored in Terraform state:
+
+```bash
+ML_JOB=$(terraform output -raw ml_recommendations_job_name)
+
+aws glue start-job-run \
+  --job-name "$ML_JOB" \
+  --arguments='{"--MONGODB_URI":"mongodb+srv://<username>:<password>@<cluster-url>/?retryWrites=true&w=majority"}'
 ```
 
 ---

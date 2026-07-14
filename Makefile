@@ -174,25 +174,25 @@ tf-destroy: ## Destroy Terraform infrastructure
 
 dbt-debug: ## Test dbt connection
 	@echo "$(BLUE)Testing dbt connection...$(NC)"
-	cd dbt_instacart && dbt debug --profiles-dir ~/.dbt
+	cd etl/dbt_project && dbt debug --profiles-dir . --target glue
 
 dbt-compile: ## Compile dbt models
 	@echo "$(BLUE)Compiling dbt models...$(NC)"
-	cd dbt_instacart && dbt compile --profiles-dir ~/.dbt
+	cd etl/dbt_project && dbt compile --profiles-dir . --target glue
 
 dbt-run: ## Run dbt models
 	@echo "$(BLUE)Running dbt models...$(NC)"
-	cd dbt_instacart && dbt run --profiles-dir ~/.dbt --target prod
+	cd etl/dbt_project && dbt run --profiles-dir . --target glue
 	@echo "$(GREEN)✓ dbt run complete$(NC)"
 
 dbt-test: ## Run dbt tests
 	@echo "$(BLUE)Running dbt tests...$(NC)"
-	cd dbt_instacart && dbt test --profiles-dir ~/.dbt --target prod
+	cd etl/dbt_project && dbt test --profiles-dir . --target glue
 
 dbt-docs: ## Generate and serve dbt documentation
 	@echo "$(BLUE)Generating dbt docs...$(NC)"
-	cd dbt_instacart && dbt docs generate --profiles-dir ~/.dbt
-	cd dbt_instacart && dbt docs serve --port 8002
+	cd etl/dbt_project && dbt docs generate --profiles-dir . --target glue
+	cd etl/dbt_project && dbt docs serve --port 8002
 
 # ============================================================================
 # Testing & Quality
@@ -200,7 +200,7 @@ dbt-docs: ## Generate and serve dbt documentation
 
 test: ## Run Python tests
 	@echo "$(BLUE)Running tests...$(NC)"
-	pytest tests/ -v
+	pytest warehouse/tests/ -v
 	@echo "$(GREEN)✓ Tests complete$(NC)"
 
 test-api: ## Test Warehouse API endpoints
@@ -230,8 +230,8 @@ clean: ## Clean temporary files
 	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .mypy_cache 2>/dev/null || true
-	rm -rf dbt_instacart/target 2>/dev/null || true
-	rm -rf dbt_instacart/dbt_packages 2>/dev/null || true
+	rm -rf etl/dbt_project/target 2>/dev/null || true
+	rm -rf etl/dbt_project/dbt_packages 2>/dev/null || true
 	@echo "$(GREEN)✓ Cleanup complete$(NC)"
 
 check-env: ## Verify environment setup
@@ -302,7 +302,7 @@ info: ## Show project information
 	@echo "Stack:"
 	@echo "  Storage:   AWS S3 (Iceberg)"
 	@echo "  Compute:   Spark OSS (local dev / EC2 deploy)"
-	@echo "  Transform: dbt-spark"
+	@echo "  Transform: dbt-glue"
 	@echo "  Metadata:  MongoDB (Docker)"
 	@echo "  Query:     DuckDB (embedded)"
 	@echo "  API:       FastAPI (Docker)"

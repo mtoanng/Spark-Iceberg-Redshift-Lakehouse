@@ -93,8 +93,8 @@ python scripts/validate_iceberg_tables.py --layer silver
 spark-submit --master local[*] pyspark/data_quality_checks.py
 
 # 8. Run dbt (build dimensional model)
-cd dbt_instacart && dbt run --profiles-dir . --target prod
-cd dbt_instacart && dbt test --profiles-dir .
+cd etl/dbt_project && dbt run --profiles-dir . --target glue
+cd etl/dbt_project && dbt test --profiles-dir . --target glue
 
 # 9. Register metadata
 python scripts/register_metadata.py
@@ -276,9 +276,9 @@ python scripts/validate_iceberg_tables.py --layer silver
 # See: databricks/README.md
 
 # Step 10: Run dbt (build dimensional model)
-cd dbt_instacart
-dbt run
-dbt test
+cd etl/dbt_project
+dbt run --profiles-dir . --target glue
+dbt test --profiles-dir . --target glue
 ```
 
 ---

@@ -61,7 +61,8 @@ pip install dbt-glue boto3
 # Set environment variables
 export GLUE_ROLE_ARN="arn:aws:iam::<account>:role/AWSGlueServiceRole-Instacart"
 export AWS_REGION="us-east-1"
-export DBT_GLUE_STAGING="s3://instacart-lakehouse/dbt-glue-staging/"
+export S3_GOLD_PATH="s3://instacart-lakehouse-yourname/gold"
+export GLUE_DATABASE="instacart_lakehouse_dev"
 ```
 
 ### Run dbt
@@ -142,9 +143,11 @@ instacart_lakehouse:
       region: "{{ env_var('AWS_REGION') }}"
       workers: 2
       worker_type: G.1X
+      glue_version: "3.0"
+      session_provisioning_timeout_in_seconds: 300
+      location: "{{ env_var('S3_GOLD_PATH') }}"
+      database: "{{ env_var('GLUE_DATABASE') }}"
       schema: gold
-      database: instacart_lakehouse
-      location: "{{ env_var('DBT_GLUE_STAGING') }}"
 ```
 
 ### Sources

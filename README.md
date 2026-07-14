@@ -1,14 +1,12 @@
 # 🛒 Instacart Lakehouse + ML Recommendations
 
-[![Status](https://img.shields.io/badge/status-production--ready-brightgreen)]()
+[![DuckDB](https://img.shields.io/badge/status-production--ready-brightgreen)]()
 [![AWS](https://img.shields.io/badge/AWS-Glue-orange)]()
 [![Iceberg](https://img.shields.io/badge/Apache-Iceberg-blue)]()
 [![dbt](https://img.shields.io/badge/dbt-Core-yellow)]()
 [![ML](https://img.shields.io/badge/ML-XGBoost-red)]()
 
 > **End-to-end data lakehouse with ML-powered product recommendations**  
-> Built on 33M+ Instacart orders • AWS Glue • Apache Iceberg • dbt • XGBoost
-
 ---
 
 ## 🎯 What Is This?
@@ -32,9 +30,6 @@ Production-ready data lakehouse processing **33M+ real Instacart orders** throug
 ## 📚 START HERE - Documentation Guide
 
 ### **🚀 Want to Get Started?**
-**[→ BẮT_ĐẦU_ĐỌC_Ở_ĐÂY.md](./BẮT_ĐẦU_ĐỌC_Ở_ĐÂY.md)** (Vietnamese guide)  
-Complete reading strategy with 6 layers (2-3 hours)
-
 **[→ CODEBASE_READING_GUIDE.md](./CODEBASE_READING_GUIDE.md)** (English)  
 Layer-by-layer deep dive from architecture to implementation
 
@@ -354,7 +349,7 @@ CSV Data (Kaggle)
       ↓
 PySpark (Databricks) → Iceberg Bronze/Silver (S3)
       ↓
-dbt-spark (Databricks) → Iceberg Gold (S3)
+dbt-glue → Iceberg Gold (S3)
       ↓
 ┌──────────────────┴────────────────────┐
 │                                       │
@@ -383,7 +378,7 @@ MongoDB                           DuckDB
 | **Storage** | AWS S3 | Object storage for Iceberg tables |
 | **Compute** | Databricks on AWS | Managed Spark (trial 14-day, not Community Edition) |
 | **Table Format** | Apache Iceberg | ACID transactions, time travel (not Delta Lake) |
-| **Transform** | dbt-spark | SQL-based dimensional modeling |
+| **Transform** | dbt-glue | SQL-based dimensional modeling |
 | **Metadata** | MongoDB | Dataset catalog + metrics definitions |
 | **Query** | DuckDB | Fast analytical query engine (embedded) |
 | **SQL Validation** | sqlglot | AST-based read-only enforcement (only SELECT) |
@@ -492,7 +487,7 @@ print(result['preview'])
 │   └── __init__.py
 ├── dags/                      # Airflow DAGs
 │   └── instacart_pipeline_dag.py
-├── dbt_instacart/            # dbt project
+├── etl/dbt_project/          # dbt project
 │   ├── models/
 │   │   ├── staging/          # Staging views (stg_orders, stg_products, stg_aisles, stg_departments)
 │   │   ├── marts/
@@ -664,21 +659,6 @@ There is no `fact_sales` table because there is no revenue to measure.
 
 ---
 
-## 💰 Cost Estimate
-
-| Service | Usage | Cost |
-|---------|-------|------|
-| AWS S3 | ~2GB storage | ~$0.05/month |
-| Databricks on AWS | Trial (14-day) | $0 (trial) |
-| MongoDB Atlas | Free tier (512MB) | $0 |
-| **Total** | | **~$0-2/month** |
-
-**Note**: Databricks on AWS trial expires after 14 days. Plan compute-heavy phases
-(Bronze/Silver ingestion, FPGrowth mining) in one continuous run. Export notebooks
-before trial expires.
-
----
-
 ## 🛠️ Development
 
 ### Run Tests
@@ -718,16 +698,5 @@ cd warehouse && uvicorn main:app --reload
 | **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** | Command cheatsheet |
 | **[DOCS_INDEX.md](DOCS_INDEX.md)** | Documentation navigation |
 | **[PROJECT_COMPLETE.md](PROJECT_COMPLETE.md)** | Deployment readiness |
-
----
-
-## 💰 Cost Breakdown
-
-| Service | Usage | Monthly Cost |
-|---------|-------|--------------|
-| AWS S3 | 2GB / 5GB free tier | **$0** |
-| Databricks AWS | 14-day trial | **$0** |
-| MongoDB Atlas | M0 free tier (512MB) | **$0** |
-| **Total** | | **$0.00** ✅ |
 
 ---

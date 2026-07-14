@@ -3,9 +3,9 @@
 resource "aws_glue_catalog_database" "instacart" {
   name        = "${var.project_name}_${var.environment}"
   description = "Instacart Market Basket Analysis Lakehouse - Iceberg Tables"
-  
+
   location_uri = "s3://${aws_s3_bucket.lakehouse.id}/warehouse/"
-  
+
   parameters = {
     "classification" = "iceberg"
     "table_type"     = "ICEBERG"
