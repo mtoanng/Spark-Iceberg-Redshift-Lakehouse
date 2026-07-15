@@ -14,12 +14,22 @@ db.createCollection('schemas');
 db.createCollection('statistics');
 db.createCollection('quality_metrics');
 db.createCollection('lineage');
+db.createCollection('metrics');
+db.createCollection('query_history');
 
 // Create indexes
 db.datasets.createIndex({ "dataset_id": 1 }, { unique: true });
 db.datasets.createIndex({ "schema_name": 1 });
 db.datasets.createIndex({ "table_name": 1 });
 db.datasets.createIndex({ "updated_at": -1 });
+
+db.metrics.createIndex({ "metric_name": 1 }, { unique: true });
+db.metrics.createIndex({ "tags": 1 });
+db.metrics.createIndex({ "owner": 1 });
+db.metrics.createIndex({ "last_run_status": 1 });
+
+db.query_history.createIndex({ "executed_at": -1 });
+db.query_history.createIndex({ "duration_ms": 1 });
 
 // =============================================================
 // Seed sample metadata documents (gold layer)
@@ -180,7 +190,8 @@ db.data_contracts.insertMany([
 ]);
 
 print("MongoDB initialized successfully");
-print("Collections created: datasets, schemas, statistics, quality_metrics, lineage, query_history, data_contracts");
-print("Indexes created on datasets collection");
+print("Collections created: datasets, schemas, statistics, quality_metrics, lineage, metrics, query_history, data_contracts");
+print("Indexes created on datasets, metrics, and query_history collections");
 print("Sample metadata seeded for 5 gold-layer tables");
 print("Data contracts seeded for 3 gold-layer tables");
+print("✨ Metrics collection ready for business logic definitions");

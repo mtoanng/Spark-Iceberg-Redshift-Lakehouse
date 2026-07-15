@@ -1,0 +1,22 @@
+# dbt Profile for AWS Glue
+instacart_lakehouse:
+  target: glue
+  outputs:
+    glue:
+      type: glue
+      query-comment: "dbt-glue for Instacart Lakehouse"
+      role_arn: "{{ env_var('GLUE_ROLE_ARN') }}"
+      region: "{{ env_var('AWS_REGION') }}"
+      workers: 2
+      worker_type: G.1X
+      glue_version: "3.0"
+      session_provisioning_timeout_in_seconds: 300
+      location: "{{ env_var('S3_GOLD_PATH') }}"
+      database: "{{ env_var('GLUE_DATABASE') }}"
+      schema: gold
+      
+      # Iceberg configuration
+      conf:
+        spark.sql.catalog.glue_catalog: org.apache.iceberg.spark.SparkCatalog
+        spark.sql.catalog.glue_catalog.catalog-impl: org.apache.iceberg.aws.glue.GlueCatalog
+        spark.sql.extensions: org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions

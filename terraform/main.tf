@@ -1,173 +1,83 @@
-# Instacart Lakehouse Infrastructure - AWS Only
-# AWS S3 (Iceberg storage) + Spark OSS (compute)
+# Terraform Configuration for Instacart Lakehouse
+# AWS Glue + S3 + Iceberg Infrastructure
 
 terraform {
-  required_version = ">= 1.5.0"
-  
+  required_version = ">= 1.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
 }
 
-# Random suffix for unique names
-resource "random_id" "suffix" {
-  byte_length = 4
-}
-
-# ============================================================================
-# AWS PROVIDER - S3 for Lakehouse Storage
-# ============================================================================
 provider "aws" {
   region = var.aws_region
-}
 
-# S3 Bucket for Iceberg Tables (Bronze + Silver)
-resource "aws_s3_bucket" "lakehouse" {
-  bucket = "${var.project_name}-${random_id.suffix.hex}"
-  
-  tags = {
-    Name        = "Instacart Lakehouse"
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-    Layer       = "Bronze-Silver"
-  }
-}
-
-# Enable versioning for data protection
-resource "aws_s3_bucket_versioning" "lakehouse" {
-  bucket = aws_s3_bucket.lakehouse.id
-  
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-# Lifecycle policy for cost optimization
-resource "aws_s3_bucket_lifecycle_configuration" "lakehouse" {
-  bucket = aws_s3_bucket.lakehouse.id
-
-  rule {
-    id     = "archive-old-versions"
-    status = "Enabled"
-
-    noncurrent_version_transition {
-      noncurrent_days = 30
-      storage_class   = "STANDARD_IA"
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 90
-    }
-  }
-  
-  rule {
-    id     = "transition-to-ia"
-    status = "Enabled"
-    
-    transition {
-      days          = 90
-      storage_class = "STANDARD_IA"
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "terraform"
     }
   }
 }
 
-# Block public access
-resource "aws_s3_bucket_public_access_block" "lakehouse" {
-  bucket = aws_s3_bucket.lakehouse.id
+data "aws_caller_identity" "current" {}
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+# Outputs
+output "aws_account_id" {
+  description = "AWS account ID for runtime AWS_ACCOUNT_ID"
+  value       = data.aws_caller_identity.current.account_id
 }
 
-# IAM User for Spark
-resource "aws_iam_user" "spark" {
-  name = "${var.project_name}-spark"
-  
-  tags = {
-    Name      = "Spark Service User"
-    ManagedBy = "Terraform"
-  }
+output "aws_region" {
+  description = "AWS region for runtime AWS_REGION"
+  value       = var.aws_region
 }
 
-# Access keys for Spark
-resource "aws_iam_access_key" "spark" {
-  user = aws_iam_user.spark.name
-}
-
-# IAM Policy for S3 access
-resource "aws_iam_user_policy" "spark_s3" {
-  name = "S3LakehouseAccess"
-  user = aws_iam_user.spark.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "ListBucket"
-        Effect = "Allow"
-        Action = [
-          "s3:ListBucket",
-          "s3:GetBucketLocation"
-        ]
-        Resource = aws_s3_bucket.lakehouse.arn
-      },
-      {
-        Sid    = "ObjectAccess"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:DeleteObject"
-        ]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/*"
-      }
-    ]
-  })
-}
-
-# ============================================================================
-# OUTPUTS
-# ============================================================================
-
-# AWS Outputs
 output "s3_bucket_name" {
-  description = "Name of S3 bucket for lakehouse"
+  description = "Lakehouse S3 bucket name"
   value       = aws_s3_bucket.lakehouse.id
 }
 
-output "s3_bucket_arn" {
-  description = "ARN of S3 bucket"
-  value       = aws_s3_bucket.lakehouse.arn
+output "s3_raw_prefix" {
+  description = "Raw data prefix in the lakehouse S3 bucket"
+  value       = var.s3_raw_prefix
 }
 
-output "aws_access_key_id" {
-  description = "AWS access key for Spark"
-  value       = aws_iam_access_key.spark.id
-  sensitive   = true
+output "s3_gold_path" {
+  description = "Gold layer S3 path for runtime S3_GOLD_PATH"
+  value       = "s3://${aws_s3_bucket.lakehouse.id}/gold"
 }
 
-output "aws_secret_access_key" {
-  description = "AWS secret key for Spark"
-  value       = aws_iam_access_key.spark.secret
-  sensitive   = true
+output "s3_warehouse_path" {
+  description = "Iceberg warehouse S3 path"
+  value       = "s3://${aws_s3_bucket.lakehouse.id}/warehouse"
 }
 
-output "architecture_summary" {
-  description = "Architecture summary"
-  value = {
-    storage  = "AWS S3 (${aws_s3_bucket.lakehouse.id})"
-    compute  = "Spark OSS (local dev / EC2 deploy)"
-    format   = "Apache Iceberg (Bronze/Silver/Gold)"
-    metadata = "MongoDB (catalog)"
-    query    = "DuckDB (embedded)"
-  }
+output "glue_database_name" {
+  description = "Glue Catalog database name"
+  value       = aws_glue_catalog_database.instacart.name
+}
+
+output "glue_role_arn" {
+  description = "Glue service role ARN"
+  value       = aws_iam_role.glue_service_role.arn
+}
+
+output "bronze_job_name" {
+  description = "Bronze ingestion Glue job name"
+  value       = aws_glue_job.bronze_ingestion.name
+}
+
+output "silver_job_name" {
+  description = "Silver transformation Glue job name"
+  value       = aws_glue_job.silver_transformation.name
+}
+
+output "ml_recommendations_job_name" {
+  description = "Spark ML recommendation Glue job name"
+  value       = aws_glue_job.ml_recommendations.name
 }

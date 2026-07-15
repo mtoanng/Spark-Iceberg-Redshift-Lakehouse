@@ -1,26 +1,28 @@
-# Instacart Lakehouse - Terraform Variables
-# AWS S3 (Iceberg storage)
-
-# ============================================================================
-# General
-# ============================================================================
-variable "project_name" {
-  description = "Project name for resource naming"
+variable "aws_region" {
+  description = "AWS region for all lakehouse resources"
   type        = string
-  default     = "instacart-lakehouse"
+  default     = "us-east-1"
 }
 
 variable "environment" {
-  description = "Environment (dev, staging, prod)"
+  description = "Environment suffix for resource names (dev, staging, prod)"
   type        = string
   default     = "dev"
 }
 
-# ============================================================================
-# AWS Variables
-# ============================================================================
-variable "aws_region" {
-  description = "AWS region for S3 bucket"
+variable "project_name" {
+  description = "Project name prefix for AWS resources"
   type        = string
-  default     = "us-east-1"
+  default     = "instacart-lakehouse"
+}
+
+variable "s3_bucket_name" {
+  description = "S3 bucket name for lakehouse storage (must be globally unique)"
+  type        = string
+}
+
+variable "s3_raw_prefix" {
+  description = "S3 prefix containing raw Instacart CSV files"
+  type        = string
+  default     = "raw/instacart"
 }
