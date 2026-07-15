@@ -7,6 +7,9 @@
 [![ML](https://img.shields.io/badge/ML-XGBoost-red)]()
 
 > **End-to-end data lakehouse with ML-powered product recommendations**  
+
+<img width="1362" height="752" alt="image" src="https://github.com/user-attachments/assets/d3b03009-0079-451d-b564-0693aac7248f" />
+
 ---
 
 ## 🎯 What Is This?
