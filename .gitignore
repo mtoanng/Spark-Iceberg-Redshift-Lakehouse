@@ -111,6 +111,7 @@ temp/
 *.zip
 *.tar.gz
 *.tgz
+scratch/
 
 # Documentation build
 site/
@@ -126,3 +127,4 @@ docs/_build/
 
 # Kiro
 .kiro/
+
