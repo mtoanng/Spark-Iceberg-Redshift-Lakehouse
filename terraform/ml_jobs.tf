@@ -29,7 +29,7 @@ resource "aws_glue_job" "ml_recommendations" {
 
     # MONGODB_URI is intentionally not stored in Terraform state.
     # Pass it at run time with --arguments, or wire it through Secrets Manager later.
-    "--MONGODB_DATABASE"                   = "instacart_warehouse"
+    "--MONGODB_DATABASE"                   = "instacart_ml_warehouse"
     "--MONGODB_RECOMMENDATIONS_COLLECTION" = "recommendations"
     "--WAREHOUSE_TABLE_PREFIX"             = "glue_catalog.gold"
     "--TOP_N"                              = "10"

@@ -503,8 +503,7 @@ print(result['preview'])
 │   └── data_quality_checks.py
 ├── scripts/                   # Utility scripts
 │   ├── download_kaggle_dataset.py
-│   ├── upload_to_s3.py
-│   └── register_metadata.py
+│   └── upload_to_s3.py
 ├── terraform/                 # Infrastructure as Code
 │   ├── main.tf
 │   └── variables.tf
@@ -542,9 +541,17 @@ DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
 DATABRICKS_TOKEN=your_token
 DATABRICKS_CLUSTER_ID=your_cluster_id
 
-# MongoDB
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=instacart_metadata
+# ============================================================================
+# MONGODB ATLAS CONFIGURATION (Recommendations Only - PRODUCTION)
+# ============================================================================
+# MongoDB Atlas is ONLY for storing ML recommendations (not for metadata catalog)
+# 
+# Get connection string from: https://cloud.mongodb.com/
+# Format: mongodb+srv://username:PASSWORD@cluster.mongodb.net/?retryWrites=true&w=majority
+#
+# IMPORTANT: Replace <db_password> with your actual MongoDB Atlas password!
+MONGODB_URI=mongodb+srv://<username>:<db_password>@<cluster-url>/?retryWrites=true&w=majority
+MONGODB_DATABASE=instacart_warehouse
 
 # Paths
 S3_GOLD_PATH=s3://instacart-lakehouse/gold
@@ -629,9 +636,14 @@ MongoDB serves as a **metadata catalog** (NOT a data store), following the patte
 - Hive Metastore (Hadoop)
 - AWS Glue Catalog
 
-Stores: dataset schemas, statistics, lineage, quality scores, tags  
-Business data stays in Iceberg (S3). One sample document per gold-layer table is seeded
-manually via `mongo-init/init-db.js` — no auto-update after dbt build (kept minimal per MVP scope).
+**MongoDB Atlas** stores ONLY ML recommendations (user → top-10 products).
+
+- Database: `instacart_warehouse`
+- Collection: `recommendations`
+- Document structure: `{user_id, products[], model_version, generated_at}`
+
+**NOT used for:** metadata catalog, schemas, lineage, or quality metrics.  
+**Metadata lives in:** AWS Glue Catalog (table schemas, partitions, statistics).
 
 ### Why DuckDB + sqlglot?
 

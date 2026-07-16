@@ -9,9 +9,12 @@ import os
 import sys
 from datetime import datetime
 
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.utils import getResolvedOptions
 from pyspark.ml.classification import LogisticRegression
 from pyspark.ml.feature import VectorAssembler
-from pyspark.sql import SparkSession, Window
+from pyspark.sql import Window
 from pyspark.sql import functions as F
 from pymongo import MongoClient, UpdateOne
 
@@ -54,14 +57,20 @@ def table_ref(table_name):
     return f"{prefix}.{table_name}" if prefix else table_name
 
 
-def create_spark():
-    return (
-        SparkSession.builder.appName("instacart-spark-ml-recommendations")
-        .config("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
-        .config("spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
-        .getOrCreate()
-    )
+def create_glue_context():
+    """Create GlueContext for AWS Glue job compatibility."""
+    from pyspark.context import SparkContext
+    
+    sc = SparkContext.getOrCreate()
+    glue_context = GlueContext(sc)
+    spark = glue_context.spark_session
+    
+    # Configure Iceberg catalog
+    spark.conf.set("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
+    spark.conf.set("spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
+    spark.conf.set("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+    
+    return glue_context
 
 
 def train_model(features_df):
@@ -181,6 +190,25 @@ def make_mongodb_partition_writer(mongodb_uri, database, collection_name, model_
 
 
 def main():
+    # Initialize Glue Job
+    try:
+        args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+        glue_context = create_glue_context()
+        spark = glue_context.spark_session
+        job = Job(glue_context)
+        job.init(args['JOB_NAME'], args)
+    except Exception:
+        # Fallback for local testing without Glue environment
+        from pyspark.sql import SparkSession
+        spark = (
+            SparkSession.builder.appName("instacart-spark-ml-recommendations")
+            .config("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
+            .config("spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
+            .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+            .getOrCreate()
+        )
+        job = None
+    
     load_args_to_env(
         [
             "MONGODB_URI",
@@ -195,12 +223,11 @@ def main():
         ]
     )
     mongodb_uri = require_env("MONGODB_URI")
-    mongodb_database = os.getenv("MONGODB_DATABASE", "instacart_warehouse")
+    mongodb_database = os.getenv("MONGODB_DATABASE", "instacart_ml_warehouse")
     mongodb_collection = os.getenv("MONGODB_RECOMMENDATIONS_COLLECTION", "recommendations")
     model_version = os.getenv("MODEL_VERSION", "spark_logistic_regression_v1")
 
     top_n = int(os.getenv("TOP_N", "10"))
-    spark = create_spark()
     spark.sparkContext.setLogLevel("WARN")
 
     try:
@@ -222,7 +249,15 @@ def main():
             )
         )
         print("Spark ML recommendation job completed")
+        
+        # Commit Glue job if running in Glue
+        if job:
+            job.commit()
+        
         return 0
+    except Exception as e:
+        print(f"ERROR: {e}")
+        raise
     finally:
         spark.stop()
 

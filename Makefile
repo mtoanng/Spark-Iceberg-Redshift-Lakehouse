@@ -90,37 +90,13 @@ docker-clean: ## Stop and remove all containers, volumes, images
 	fi
 
 # ============================================================================
-# MongoDB Management
+# MongoDB Management (Development Only - NOT for production)
 # ============================================================================
+# Note: Production uses MongoDB Atlas (cloud), not local Docker MongoDB
+# These commands are for LOCAL TESTING only
 
-mongo-shell: ## Open MongoDB shell
-	@docker-compose exec mongodb mongosh -u admin -p admin123 instacart_metadata
-
-mongo-backup: ## Backup MongoDB data
-	@echo "$(BLUE)Backing up MongoDB...$(NC)"
-	@mkdir -p ./backups
-	docker-compose exec mongodb mongodump \
-		-u admin -p admin123 \
-		--authenticationDatabase admin \
-		--db instacart_metadata \
-		--out /tmp/backup
-	docker cp instacart-mongodb:/tmp/backup ./backups/mongodb-$$(date +%Y%m%d_%H%M%S)
-	@echo "$(GREEN)✓ Backup complete$(NC)"
-
-mongo-restore: ## Restore MongoDB data (usage: make mongo-restore BACKUP=./backups/mongodb-20260710_120000)
-	@if [ -z "$(BACKUP)" ]; then \
-		echo "$(RED)Error: Please specify BACKUP path$(NC)"; \
-		echo "Usage: make mongo-restore BACKUP=./backups/mongodb-20260710_120000"; \
-		exit 1; \
-	fi
-	@echo "$(BLUE)Restoring MongoDB from $(BACKUP)...$(NC)"
-	docker cp $(BACKUP) instacart-mongodb:/tmp/restore
-	docker-compose exec mongodb mongorestore \
-		-u admin -p admin123 \
-		--authenticationDatabase admin \
-		--db instacart_metadata \
-		/tmp/restore/instacart_metadata
-	@echo "$(GREEN)✓ Restore complete$(NC)"
+mongo-shell-dev: ## Open MongoDB shell (LOCAL DEV ONLY)
+	@docker-compose exec mongodb mongosh -u admin -p admin123 instacart_ml_warehouse
 
 # ============================================================================
 # Data Pipeline
@@ -135,11 +111,6 @@ upload-s3: ## Upload data to S3
 	@echo "$(BLUE)Uploading data to S3...$(NC)"
 	python scripts/upload_to_s3.py
 	@echo "$(GREEN)✓ Upload complete$(NC)"
-
-register-metadata: ## Register Gold layer metadata to MongoDB
-	@echo "$(BLUE)Registering metadata...$(NC)"
-	python scripts/register_metadata.py
-	@echo "$(GREEN)✓ Metadata registered$(NC)"
 
 # ============================================================================
 # Terraform
@@ -267,8 +238,8 @@ status: ## Show project status
 	@echo "S3 Bucket:"
 	@aws s3 ls | grep instacart || echo "  Not found"
 	@echo ""
-	@echo "MongoDB:"
-	@docker-compose exec mongodb mongosh --quiet --eval "db.datasets.countDocuments()" instacart_metadata 2>/dev/null || echo "  Not accessible"
+	@echo "MongoDB (Local Dev Only):"
+	@docker-compose exec mongodb mongosh --quiet --eval "db.recommendations.countDocuments()" instacart_ml_warehouse 2>/dev/null || echo "  Not accessible (use MongoDB Atlas for production)"
 
 # ============================================================================
 # Quick Workflows
@@ -286,7 +257,7 @@ quick-start: setup-env docker-up ## Quick start (setup + start services)
 	@echo "  5. Run pipeline (spark-submit or Airflow DAG)"
 	@echo "  6. Run: make register-metadata"
 
-full-pipeline: download-data upload-s3 dbt-run register-metadata ## Run full local pipeline
+full-pipeline: download-data upload-s3 dbt-run ## Run full local pipeline (without metadata registration)
 	@echo "$(GREEN)✓ Full pipeline complete!$(NC)"
 
 # ============================================================================
@@ -297,14 +268,16 @@ info: ## Show project information
 	@echo "$(BLUE)Instacart Data Lakehouse$(NC)"
 	@echo ""
 	@echo "Architecture:"
-	@echo "  CSV → S3 → PySpark (Bronze/Silver) → dbt (Gold) → MongoDB + DuckDB → FastAPI"
+	@echo "  CSV → S3 → PySpark (Bronze/Silver) → dbt (Gold) → Spark ML → MongoDB Atlas"
 	@echo ""
 	@echo "Stack:"
-	@echo "  Storage:   AWS S3 (Iceberg)"
-	@echo "  Compute:   Spark OSS (local dev / EC2 deploy)"
+	@echo "  Storage:   AWS S3 (Iceberg format)"
+	@echo "  Metadata:  AWS Glue Catalog"
+	@echo "  Compute:   AWS Glue (Spark 3.3+)"
 	@echo "  Transform: dbt-glue"
-	@echo "  Metadata:  MongoDB (Docker)"
-	@echo "  Query:     DuckDB (embedded)"
+	@echo "  ML:        Spark ML (recommendations)"
+	@echo "  MongoDB:   MongoDB Atlas (recommendations only)"
+	@echo "  Query:     DuckDB (local warehouse API)"
 	@echo "  API:       FastAPI (Docker)"
 	@echo ""
 	@echo "Documentation:"

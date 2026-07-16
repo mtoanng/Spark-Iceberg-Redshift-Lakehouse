@@ -1,19 +1,35 @@
-"""MongoDB-backed metadata catalog used by setup scripts."""
+"""MongoDB Atlas recommendations store - PRODUCTION ONLY.
+MongoDB Atlas is ONLY for storing ML recommendations.
+"""
 
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from pymongo import MongoClient
+import os
 
 
 class MetadataStore:
-    """Small catalog wrapper for dataset metadata documents."""
+    """DEPRECATED: This class is not used in production.
+    
+    Kept for backward compatibility with old scripts only.
+    MongoDB Atlas is ONLY for recommendations, not metadata.
+    """
 
     def __init__(
         self,
-        uri: str = "mongodb://admin:admin123@localhost:27017/",
-        database: str = "instacart_warehouse",
+        uri: str = None,
+        database: str = "instacart_ml_warehouse",
     ) -> None:
+        if uri is None:
+            uri = os.getenv("MONGODB_URI")
+            if not uri:
+                raise ValueError(
+                    "MONGODB_URI environment variable required. "
+                    "Use MongoDB Atlas for production: "
+                    "mongodb+srv://username:password@cluster.mongodb.net/"
+                )
+        
         self._client = MongoClient(uri)
         self._db = self._client[database]
         self._collection = self._db["datasets"]

@@ -54,12 +54,10 @@ def test_scripts():
     """Test key scripts exist"""
     print("\n3  Testing key scripts...")
     
+    # Essential scripts
     required_scripts = [
         "scripts/download_kaggle_dataset.py",
-        "scripts/upload_to_s3.py",
-        "scripts/register_metadata.py",
-        "scripts/seed_instacart_metrics.py",
-        "scripts/test_metrics_api.py"
+        "scripts/upload_to_s3.py"
     ]
     
     all_exist = True

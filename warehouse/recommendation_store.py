@@ -45,17 +45,23 @@ class RecommendationStore:
     def __init__(
         self,
         mongo_uri: Optional[str] = None,
-        database: str = "instacart_warehouse"
+        database: str = "instacart_ml_warehouse"
     ):
         """
         Initialize MongoDB connection
         
         Args:
             mongo_uri: MongoDB connection string (reads from env if not provided)
-            database: Database name (default: instacart_warehouse)
+            database: Database name (default: instacart_ml_warehouse)
         """
         if mongo_uri is None:
-            mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+            # PRODUCTION: Use MongoDB Atlas from environment variable
+            mongo_uri = os.getenv("MONGODB_URI")
+            if not mongo_uri:
+                raise ValueError(
+                    "MONGODB_URI environment variable required. "
+                    "Use MongoDB Atlas: mongodb+srv://username:password@cluster.mongodb.net/"
+                )
         
         self._client = MongoClient(mongo_uri)
         self._db = self._client[database]

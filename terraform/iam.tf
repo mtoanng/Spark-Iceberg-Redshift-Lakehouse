@@ -105,80 +105,11 @@ resource "aws_iam_role_policy" "glue_cloudwatch_policy" {
   })
 }
 
-# DuckDB Role (for warehouse query engine)
-# Allows DuckDB to read Iceberg tables via Glue Catalog
-resource "aws_iam_role" "duckdb_role" {
-  name = "DuckDBGlueCatalogRole-${var.project_name}"
+# Note: DuckDB runs inside Docker with ~/.aws mounted as read-only volume.
+# It authenticates using the IAM user credentials directly via credential_chain.
+# No separate DuckDB role is needed - the IAM user permissions above are sufficient.
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com" # Adjust based on where DuckDB runs
-        }
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
-
-  tags = {
-    Name = "duckdb-catalog-role"
-  }
-}
-
-# DuckDB S3 read-only access
-resource "aws_iam_role_policy" "duckdb_s3_policy" {
-  name = "DuckDBS3ReadPolicy"
-  role = aws_iam_role.duckdb_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "${aws_s3_bucket.lakehouse.arn}",
-          "${aws_s3_bucket.lakehouse.arn}/*"
-        ]
-      }
-    ]
-  })
-}
-
-# DuckDB Glue Catalog read access
-resource "aws_iam_role_policy" "duckdb_catalog_policy" {
-  name = "DuckDBCatalogReadPolicy"
-  role = aws_iam_role.duckdb_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "glue:GetDatabase",
-          "glue:GetTable",
-          "glue:GetPartition",
-          "glue:BatchGetPartition"
-        ]
-        Resource = [
-          "arn:aws:glue:${var.aws_region}:*:catalog",
-          "arn:aws:glue:${var.aws_region}:*:database/${aws_glue_catalog_database.instacart.name}",
-          "arn:aws:glue:${var.aws_region}:*:table/${aws_glue_catalog_database.instacart.name}/*"
-        ]
-      }
-    ]
-  })
-}
-
-# Output DuckDB role ARN for warehouse configuration
 output "duckdb_role_arn" {
-  description = "DuckDB role ARN for Glue Catalog access"
-  value       = aws_iam_role.duckdb_role.arn
+  description = "DuckDB uses IAM user credentials directly via mounted ~/.aws - no separate role needed"
+  value       = "n/a - DuckDB uses IAM user credentials via ~/.aws mount"
 }

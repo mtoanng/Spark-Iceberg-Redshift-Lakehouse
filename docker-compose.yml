@@ -12,10 +12,10 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin123
-      MONGO_INITDB_DATABASE: instacart_warehouse
+      MONGO_INITDB_DATABASE: instacart_ml_warehouse
     volumes:
       - mongodb-data:/data/db
-      - ./mongo-init:/docker-entrypoint-initdb.d
+      # mongo-init removed - not used for production (recommendations only)
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -36,7 +36,7 @@ services:
     environment:
       # MongoDB connection (internal only)
       MONGODB_URI: mongodb://admin:admin123@mongodb:27017/
-      MONGODB_DATABASE: instacart_warehouse
+      MONGODB_DATABASE: instacart_ml_warehouse
       
       # AWS credentials (for S3 access)
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -51,7 +51,6 @@ services:
       # DuckDB / Glue Catalog
       DUCKDB_PATH: ${DUCKDB_PATH:-warehouse/data/warehouse.db}
       USE_GLUE_CATALOG: ${USE_GLUE_CATALOG:-true}
-      DUCKDB_ROLE_ARN: ${DUCKDB_ROLE_ARN}
       GLUE_DATABASE: ${GLUE_DATABASE}
       
       # API settings
