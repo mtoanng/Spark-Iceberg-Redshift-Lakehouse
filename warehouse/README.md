@@ -28,9 +28,19 @@ pip install fastapi uvicorn duckdb pymongo pydantic pandas
 ### Environment Variables
 
 ```bash
-# MongoDB
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DATABASE=instacart_metadata
+# ============================================================================
+# MONGODB ATLAS CONFIGURATION (Recommendations Only - PRODUCTION)
+# ============================================================================
+# Get your MongoDB Atlas connection string from:
+# https://cloud.mongodb.com/ → Clusters → Connect
+# 
+# Format: mongodb+srv://username:PASSWORD@cluster.mongodb.net/?retryWrites=true&w=majority
+# 
+# IMPORTANT: Replace <db_password> with your actual Atlas password!
+MONGODB_URI=mongodb+srv://<username>:<db_password>@<cluster-url>/?retryWrites=true&w=majority
+MONGODB_DATABASE=instacart_warehouse
+
+# Note: MongoDB is ONLY used for storing ML recommendations (not metadata)
 
 # S3 / Iceberg
 S3_GOLD_PATH=s3://instacart-lakehouse/gold

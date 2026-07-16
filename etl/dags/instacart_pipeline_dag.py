@@ -5,13 +5,12 @@ Orchestrates:
 1. Bronze ingestion (AWS Glue Job)
 2. Silver transformation (AWS Glue Job)
 3. Gold layer (dbt-glue)
-4. ML model training (XGBoost)
-5. Recommendation generation (MongoDB)
+4. ML recommendations (AWS Glue Job - Spark ML)
 
 Schedule: Weekly (for demonstration - dataset is static)
 
 Author: Data Engineering Team
-Date: 2026-07-13
+Date: 2026-07-16
 """
 
 from airflow import DAG
@@ -111,27 +110,23 @@ dbt_test = BashOperator(
     dag=dag
 )
 
-# Task 6: Train reorder prediction model
-train_reorder_model = BashOperator(
-    task_id='train_reorder_model',
-    bash_command="""
-        cd {{ var.value.project_root }} && \
-        python etl/ml/train_reorder_model.py
-    """,
+# Task 6: ML Recommendations (Spark ML on AWS Glue)
+ml_recommendations = GlueJobOperator(
+    task_id='ml_recommendations',
+    job_name='instacart-lakehouse-ml-recommendations',
+    script_args={
+        '--MONGODB_URI': '{{ var.value.mongodb_uri }}',
+        '--MONGODB_DATABASE': '{{ var.value.mongodb_database | default("instacart_ml_warehouse", true) }}',
+        '--TOP_N': '10'
+    },
+    aws_conn_id='aws_default',
+    region_name='{{ var.value.aws_region }}',
+    wait_for_completion=True,
+    verbose=True,
     dag=dag
 )
 
-# Task 7: Generate recommendations and write to MongoDB
-generate_recommendations = BashOperator(
-    task_id='generate_recommendations',
-    bash_command="""
-        cd {{ var.value.project_root }} && \
-        python etl/ml/generate_recommendations.py
-    """,
-    dag=dag
-)
-
-# Task 8: Verify recommendations were written
+# Task 7: Verify recommendations were written
 def verify_recommendations_func():
     """
     Verify recommendations were written to MongoDB
@@ -141,17 +136,19 @@ def verify_recommendations_func():
     - Recommendation count > 0
     - Sample user has recommendations
     """
-    import sys
     import os
-    sys.path.insert(0, os.path.join(os.environ.get('PROJECT_ROOT', '.'), 'warehouse'))
-    
-    from recommendation_store import RecommendationStore
+    from warehouse.recommendation_store import RecommendationStore
     
     logger.info("🔍 Verifying recommendations...")
     
+    # Require MongoDB URI - no localhost fallback
+    mongodb_uri = os.environ.get('MONGODB_URI')
+    if not mongodb_uri:
+        raise ValueError("MONGODB_URI environment variable required")
+    
     rec_store = RecommendationStore(
-        mongo_uri=os.environ.get('MONGODB_URI', 'mongodb://mongodb:27017'),
-        database='instacart_warehouse'
+        mongo_uri=mongodb_uri,
+        database='instacart_ml_warehouse'
     )
     
     try:
@@ -175,7 +172,7 @@ verify_recommendations = PythonOperator(
 )
 
 # Define task dependencies (linear pipeline)
-validate_schema >> load_bronze >> transform_silver >> dbt_run >> dbt_test >> train_reorder_model >> generate_recommendations >> verify_recommendations
+validate_schema >> load_bronze >> transform_silver >> dbt_run >> dbt_test >> ml_recommendations >> verify_recommendations
 
 # Documentation
 dag.doc_md = """
@@ -190,8 +187,8 @@ CSV (S3) → AWS Glue Jobs → Iceberg Tables → dbt Gold → ML Model → Mong
 - **Bronze:** Raw CSV → Iceberg (6 tables)
 - **Silver:** Cleaned, enriched, deduplicated (3 tables)
 - **Gold:** Star schema + ML features (10 dbt models)
-- **ML:** XGBoost reorder prediction
-- **Recommendations:** Top-N products per user (MongoDB)
+- **ML:** Spark ML Logistic Regression (AWS Glue Job)
+- **Recommendations:** Top-N products per user (MongoDB Atlas)
 
 ## Schedule
 - **Interval:** Weekly
@@ -202,7 +199,9 @@ CSV (S3) → AWS Glue Jobs → Iceberg Tables → dbt Gold → ML Model → Mong
 ## Airflow Variables Required
 - `s3_bucket`: S3 bucket name (e.g., "instacart-lakehouse-prod")
 - `aws_region`: AWS region (e.g., "us-east-1")
-- `project_root`: Absolute path to project root (e.g., "/opt/airflow/dags/instacart-lakehouse")
+- `project_root`: Absolute path to project root (e.g., "/opt/airflow/dags/repo")
+- `mongodb_uri`: MongoDB Atlas connection string
+- `mongodb_database`: MongoDB database name (default: "instacart_ml_warehouse")
 
 ## AWS Connections Required
 - `aws_default`: AWS credentials with permissions for:
@@ -211,8 +210,7 @@ CSV (S3) → AWS Glue Jobs → Iceberg Tables → dbt Gold → ML Model → Mong
   - Glue Data Catalog (GetDatabase, GetTable)
 
 ## Environment Variables Required
-- `MONGODB_URI`: MongoDB connection string
-- `AWS_ACCESS_KEY_ID`: AWS access key
+- `AWS_ACCESS_KEY_ID`: AWS access key (for Glue Catalog access from dbt)
 - `AWS_SECRET_ACCESS_KEY`: AWS secret key
 - `AWS_REGION`: AWS region
 

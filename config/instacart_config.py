@@ -33,11 +33,17 @@ S3_GOLD_PATH = os.getenv(
 GLUE_DATABASE = os.getenv("GLUE_DATABASE", "instacart_lakehouse_dev")
 GLUE_ROLE_ARN = os.getenv("GLUE_ROLE_ARN")
 
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://admin:admin123@localhost:27017/")
-MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "instacart_warehouse")
+# PRODUCTION: MongoDB Atlas (recommendations only)
+MONGODB_URI = os.getenv("MONGODB_URI")
+if not MONGODB_URI:
+    raise ValueError(
+        "MONGODB_URI environment variable required. "
+        "Use MongoDB Atlas: mongodb+srv://username:password@cluster.mongodb.net/"
+    )
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "instacart_ml_warehouse")
 
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", "warehouse/data/warehouse.db")
-DUCKDB_ROLE_ARN = os.getenv("DUCKDB_ROLE_ARN")
+# DUCKDB_ROLE_ARN removed - Docker mounts ~/.aws, uses IAM user credentials
 USE_GLUE_CATALOG = os.getenv("USE_GLUE_CATALOG", "true").lower() == "true"
 
 INSTACART_FILES = {

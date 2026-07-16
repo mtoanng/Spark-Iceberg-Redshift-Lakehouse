@@ -55,13 +55,49 @@ Validate Iceberg tables exist and have data.
 ```bash
 python scripts/validate_iceberg_tables.py --layer bronze
 python scripts/validate_iceberg_tables.py --layer silver
-```
+### Production Scripts
 
-### `register_metadata.py`
-Register Gold layer table metadata to MongoDB catalog.
+Essential scripts for deployment:
+
+#### `download_kaggle_dataset.py`
+Download Instacart dataset from Kaggle.
 
 ```bash
-python scripts/register_metadata.py
+python scripts/download_kaggle_dataset.py
+```
+
+#### `upload_to_s3.py`
+Upload raw CSV files to S3 bucket.
+
+```bash
+python scripts/upload_to_s3.py
+```
+
+---
+
+### Development/Testing Scripts
+
+Optional scripts for local development:
+
+#### `explore_data_local.py`
+Explore dataset structure locally before uploading to S3.
+
+#### `validate_iceberg_tables.py`
+Validate Iceberg table metadata and schemas.
+
+---
+
+## Quick Workflow
+
+```bash
+# 1. Download dataset
+python scripts/download_kaggle_dataset.py
+
+# 2. Upload to S3
+python scripts/upload_to_s3.py
+
+# 3. Continue with Terraform & Glue Jobs
+# See: SETUP_CHECKLIST_A_TO_Z.md
 ```
 
 Reads table stats (row count, schema, location) from Spark and writes metadata documents to MongoDB.
@@ -95,9 +131,8 @@ spark-submit --master local[*] pyspark/data_quality_checks.py
 # 8. Run dbt (build dimensional model)
 cd etl/dbt_project && dbt run --profiles-dir . --target glue
 cd etl/dbt_project && dbt test --profiles-dir . --target glue
-
-# 9. Register metadata
-python scripts/register_metadata.py
+# 9. Done! API ready
+# See: SETUP_CHECKLIST_A_TO_Z.md for deployment
 ```
 
 ---

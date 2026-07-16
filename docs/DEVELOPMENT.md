@@ -106,11 +106,16 @@ pip install dbt-glue
 # Start local services
 docker-compose up -d mongodb
 
-# Set environment variables
-export AWS_REGION=us-east-1
-export MONGODB_URI=mongodb://admin:admin123@localhost:27017
+# ============================================================================
+# DEVELOPMENT ONLY: Local Development Configuration
+# ============================================================================
+# For local development without AWS, use local MongoDB (docker-compose)
+export MONGODB_URI=mongodb://admin:admin123@mongodb:27017
 export USE_GLUE_CATALOG=false  # Use local for dev
 export DUCKDB_PATH=warehouse/data/warehouse_dev.db
+
+# PRODUCTION: Use MongoDB Atlas
+# export MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/
 ```
 
 ---

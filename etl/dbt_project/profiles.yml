@@ -9,7 +9,7 @@ instacart_lakehouse:
       region: "{{ env_var('AWS_REGION') }}"
       workers: 2
       worker_type: G.1X
-      glue_version: "3.0"
+      glue_version: "4.0"
       session_provisioning_timeout_in_seconds: 300
       location: "{{ env_var('S3_GOLD_PATH') }}"
       database: "{{ env_var('GLUE_DATABASE') }}"

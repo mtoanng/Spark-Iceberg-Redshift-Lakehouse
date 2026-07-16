@@ -69,13 +69,13 @@ engine = DuckDBEngine(
     db_path=os.getenv("DUCKDB_PATH", "warehouse/data/warehouse.db"),
     use_glue_catalog=os.getenv("USE_GLUE_CATALOG", "true").lower() == "true",
     account_id=os.getenv("AWS_ACCOUNT_ID"),
-    role_arn=os.getenv("DUCKDB_ROLE_ARN"),
+    role_arn=None,  # Docker mounts ~/.aws, DuckDB uses IAM user credentials directly
     region=os.getenv("AWS_REGION", "us-east-1")
 )
 
 rec_store = RecommendationStore(
     mongo_uri=os.getenv("MONGODB_URI", "mongodb://mongodb:27017"),
-    database=os.getenv("MONGODB_DATABASE", "instacart_warehouse")
+    database=os.getenv("MONGODB_DATABASE", "instacart_ml_warehouse")
 )
 
 print("✅ Warehouse services initialized")
