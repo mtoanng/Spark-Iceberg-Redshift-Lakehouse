@@ -70,11 +70,11 @@ airflow-*.pid
 airflow-*.err
 airflow-*.log
 
-# dbt
-dbt_instacart/target/
-dbt_instacart/dbt_packages/
-dbt_instacart/logs/
-dbt_instacart/profiles.yml
+# dbt (current structure)
+etl/dbt_project/target/
+etl/dbt_project/dbt_packages/
+etl/dbt_project/logs/
+etl/dbt_project/.user.yml
 
 # Spark
 spark-warehouse/
