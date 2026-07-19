@@ -1,28 +1,62 @@
 variable "aws_region" {
-  description = "AWS region for all lakehouse resources"
   type        = string
+  description = "AWS region for the bounded demo."
   default     = "us-east-1"
 }
 
 variable "environment" {
-  description = "Environment suffix for resource names (dev, staging, prod)"
   type        = string
+  description = "Short environment name used in resource names."
   default     = "dev"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.environment))
+    error_message = "environment must contain lowercase letters, digits, and hyphens only."
+  }
 }
 
 variable "project_name" {
-  description = "Project name prefix for AWS resources"
   type        = string
-  default     = "instacart-lakehouse"
+  description = "Resource prefix for the NYC HVFHV lakehouse."
+  default     = "nyc-hvfhs-lakehouse"
 }
 
 variable "s3_bucket_name" {
-  description = "S3 bucket name for lakehouse storage (must be globally unique)"
   type        = string
+  description = "Globally unique S3 bucket name; set in a private tfvars file."
 }
 
-variable "s3_raw_prefix" {
-  description = "S3 prefix containing raw Instacart CSV files"
+variable "landing_prefix" {
   type        = string
-  default     = "raw/instacart"
+  description = "S3 prefix for immutable source objects."
+  default     = "landing"
+}
+
+variable "reference_prefix" {
+  type        = string
+  description = "S3 prefix for the Taxi Zone lookup."
+  default     = "reference"
+}
+
+variable "warehouse_prefix" {
+  type        = string
+  description = "S3 prefix for Iceberg metadata and data files."
+  default     = "warehouse"
+}
+
+variable "glue_worker_type" {
+  type        = string
+  description = "Smallest approved Glue worker type for the bounded demo."
+  default     = "G.1X"
+}
+
+variable "glue_worker_count" {
+  type        = number
+  description = "Worker count for each Glue job."
+  default     = 2
+
+  validation {
+    condition     = var.glue_worker_count >= 2 && var.glue_worker_count <= 10
+    error_message = "glue_worker_count must be between 2 and 10."
+  }
 }

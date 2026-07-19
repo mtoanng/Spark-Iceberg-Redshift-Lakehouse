@@ -1,13 +1,11 @@
 # Airflow image with Spark + Postgres providers for pipeline orchestration.
 # Used by docker-compose or standalone Airflow deployments.
-# (Not the Warehouse API — see Dockerfile.warehouse for that.)
-FROM apache/airflow:2.9.0
+# This image is only for the Airflow orchestration plane.
+FROM apache/airflow:3.3.0
 
 USER airflow
 
 RUN pip install --no-cache-dir \
     pyspark==3.5.0 \
-    psycopg2-binary \
-    apache-airflow-providers-apache-spark \
-    apache-airflow-providers-postgres
+    apache-airflow-providers-amazon
 

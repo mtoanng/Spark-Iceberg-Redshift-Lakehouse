@@ -6,9 +6,9 @@
 - Selected MVP source: <https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2024-01.parquet>
 - Taxi Zone lookup: <https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv>
 
-The selected production month is **2024-01**. The `2025-01` fixture exists
-only to express the later schema contract; it is not an approved Phase 1
-ingestion target.
+The selected production month is **2024-01**. The `2025-01` fixture exists for
+the optional Phase 7 schema-evolution contract; it is not a 2024 junior-scope
+backfill target.
 
 ## Production-source evidence
 
@@ -46,8 +46,9 @@ The source adapter requires the following 2024 source columns:
 
 For 2025 and later, `cbd_congestion_fee` is additionally required. The TLC
 trip-record page states that this column was added to High Volume FHV data from
-2025 onward. The Phase 1 adapter only detects this shape; schema evolution is
-explicitly deferred to Phase 7.
+2025 onward. Phase 7 now defines a remote-only, one-time nullable Bronze schema
+evolution plan for this column; execution and resulting Iceberg snapshots remain
+NOT VERIFIED.
 
 ## Deterministic fixtures
 

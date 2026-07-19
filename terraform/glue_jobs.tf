@@ -1,135 +1,132 @@
-# AWS Glue Jobs for Bronze and Silver layers
+locals {
+  glue_common_arguments = {
+    "--datalake-formats"                 = "iceberg"
+    "--enable-glue-datacatalog"          = "true"
+    "--enable-job-insights"              = "true"
+    "--enable-metrics"                   = "true"
+    "--enable-continuous-cloudwatch-log" = "true"
+    "--job-language"                     = "python"
+    "--TempDir"                          = "s3://${aws_s3_bucket.lakehouse.id}/tmp/"
+    "--conf"                             = "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+  }
+}
 
-# Upload Glue job scripts to S3 first
+resource "aws_s3_object" "initialize_script" {
+  bucket = aws_s3_bucket.lakehouse.id
+  key    = "glue_jobs/initialize_nyc_iceberg_tables.py"
+  source = "${path.module}/../etl/glue_jobs/initialize_nyc_iceberg_tables.py"
+  etag   = filemd5("${path.module}/../etl/glue_jobs/initialize_nyc_iceberg_tables.py")
+}
+
 resource "aws_s3_object" "bronze_script" {
   bucket = aws_s3_bucket.lakehouse.id
-  key    = "glue_jobs/bronze_ingestion.py"
-  source = "../etl/glue_jobs/bronze_ingestion.py"
-  etag   = filemd5("../etl/glue_jobs/bronze_ingestion.py")
+  key    = "glue_jobs/nyc_bronze_ingestion.py"
+  source = "${path.module}/../etl/glue_jobs/nyc_bronze_ingestion.py"
+  etag   = filemd5("${path.module}/../etl/glue_jobs/nyc_bronze_ingestion.py")
 }
 
 resource "aws_s3_object" "silver_script" {
   bucket = aws_s3_bucket.lakehouse.id
-  key    = "glue_jobs/silver_transformation.py"
-  source = "../etl/glue_jobs/silver_transformation.py"
-  etag   = filemd5("../etl/glue_jobs/silver_transformation.py")
+  key    = "glue_jobs/nyc_silver_transform.py"
+  source = "${path.module}/../etl/glue_jobs/nyc_silver_transform.py"
+  etag   = filemd5("${path.module}/../etl/glue_jobs/nyc_silver_transform.py")
 }
 
-# Bronze Ingestion Glue Job
-resource "aws_glue_job" "bronze_ingestion" {
-  name     = "${var.project_name}-bronze-ingestion"
-  role_arn = aws_iam_role.glue_service_role.arn
+resource "aws_s3_object" "quality_script" {
+  bucket = aws_s3_bucket.lakehouse.id
+  key    = "glue_jobs/nyc_quality_checkpoint.py"
+  source = "${path.module}/../etl/glue_jobs/nyc_quality_checkpoint.py"
+  etag   = filemd5("${path.module}/../etl/glue_jobs/nyc_quality_checkpoint.py")
+}
+
+resource "aws_s3_object" "schema_evolution_script" {
+  bucket = aws_s3_bucket.lakehouse.id
+  key    = "glue_jobs/nyc_schema_evolution_2025.py"
+  source = "${path.module}/../etl/glue_jobs/nyc_schema_evolution_2025.py"
+  etag   = filemd5("${path.module}/../etl/glue_jobs/nyc_schema_evolution_2025.py")
+}
+
+resource "aws_glue_job" "initialize" {
+  name              = "${var.project_name}-${var.environment}-initialize"
+  role_arn          = aws_iam_role.glue_service.arn
+  glue_version      = "4.0"
+  worker_type       = var.glue_worker_type
+  number_of_workers = var.glue_worker_count
+  max_retries       = 0
+  timeout           = 30
 
   command {
     name            = "glueetl"
+    python_version  = "3"
+    script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.initialize_script.key}"
+  }
+  default_arguments = local.glue_common_arguments
+}
+
+resource "aws_glue_job" "bronze" {
+  name              = "${var.project_name}-${var.environment}-bronze"
+  role_arn          = aws_iam_role.glue_service.arn
+  glue_version      = "4.0"
+  worker_type       = var.glue_worker_type
+  number_of_workers = var.glue_worker_count
+  max_retries       = 1
+  timeout           = 120
+
+  command {
+    name            = "glueetl"
+    python_version  = "3"
     script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.bronze_script.key}"
-    python_version  = "3"
   }
-
-  default_arguments = {
-    "--job-language"                     = "python"
-    "--job-bookmark-option"              = "job-bookmark-disable"
-    "--enable-metrics"                   = "true"
-    "--enable-spark-ui"                  = "true"
-    "--spark-event-logs-path"            = "s3://${aws_s3_bucket.lakehouse.id}/spark-logs/"
-    "--enable-job-insights"              = "true"
-    "--enable-glue-datacatalog"          = "true"
-    "--enable-continuous-cloudwatch-log" = "true"
-    "--TempDir"                          = "s3://${aws_s3_bucket.lakehouse.id}/temp/"
-
-    # Job-specific parameters
-    "--S3_BUCKET"     = aws_s3_bucket.lakehouse.id
-    "--S3_RAW_PREFIX" = var.s3_raw_prefix
-
-    # Iceberg configuration
-    "--datalake-formats" = "iceberg"
-    "--conf"             = "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
-  }
-
-  glue_version      = "4.0"
-  max_retries       = 1
-  timeout           = 120 # 2 hours
-  worker_type       = "G.1X"
-  number_of_workers = 2
-
-  execution_property {
-    max_concurrent_runs = 1
-  }
-
-  tags = {
-    Name  = "bronze-ingestion"
-    Layer = "bronze"
-  }
-
-  depends_on = [
-    aws_s3_object.bronze_script,
-    aws_glue_catalog_database.instacart
-  ]
+  default_arguments = local.glue_common_arguments
 }
 
-# Silver Transformation Glue Job
-resource "aws_glue_job" "silver_transformation" {
-  name     = "${var.project_name}-silver-transformation"
-  role_arn = aws_iam_role.glue_service_role.arn
+resource "aws_glue_job" "silver" {
+  name              = "${var.project_name}-${var.environment}-silver"
+  role_arn          = aws_iam_role.glue_service.arn
+  glue_version      = "4.0"
+  worker_type       = var.glue_worker_type
+  number_of_workers = var.glue_worker_count
+  max_retries       = 1
+  timeout           = 120
 
   command {
     name            = "glueetl"
-    script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.silver_script.key}"
     python_version  = "3"
+    script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.silver_script.key}"
   }
+  default_arguments = local.glue_common_arguments
+}
 
-  default_arguments = {
-    "--job-language"                     = "python"
-    "--job-bookmark-option"              = "job-bookmark-disable"
-    "--enable-metrics"                   = "true"
-    "--enable-spark-ui"                  = "true"
-    "--spark-event-logs-path"            = "s3://${aws_s3_bucket.lakehouse.id}/spark-logs/"
-    "--enable-job-insights"              = "true"
-    "--enable-glue-datacatalog"          = "true"
-    "--enable-continuous-cloudwatch-log" = "true"
-    "--TempDir"                          = "s3://${aws_s3_bucket.lakehouse.id}/temp/"
-
-    # Iceberg configuration
-    "--datalake-formats" = "iceberg"
-    "--conf"             = "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
-  }
-
+resource "aws_glue_job" "quality" {
+  name              = "${var.project_name}-${var.environment}-quality"
+  role_arn          = aws_iam_role.glue_service.arn
   glue_version      = "4.0"
-  max_retries       = 1
-  timeout           = 180 # 3 hours
-  worker_type       = "G.1X"
-  number_of_workers = 3 # More workers for transformation
+  worker_type       = var.glue_worker_type
+  number_of_workers = var.glue_worker_count
+  max_retries       = 0
+  timeout           = 60
 
-  execution_property {
-    max_concurrent_runs = 1
+  command {
+    name            = "glueetl"
+    python_version  = "3"
+    script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.quality_script.key}"
   }
-
-  tags = {
-    Name  = "silver-transformation"
-    Layer = "silver"
-  }
-
-  depends_on = [
-    aws_s3_object.silver_script,
-    aws_glue_job.bronze_ingestion # Run after bronze
-  ]
+  default_arguments = local.glue_common_arguments
 }
 
-# CloudWatch Log Groups for Glue Jobs
-resource "aws_cloudwatch_log_group" "bronze_job_logs" {
-  name              = "/aws-glue/jobs/${aws_glue_job.bronze_ingestion.name}"
-  retention_in_days = 7
+resource "aws_glue_job" "schema_evolution" {
+  name              = "${var.project_name}-${var.environment}-schema-evolution-2025"
+  role_arn          = aws_iam_role.glue_service.arn
+  glue_version      = "4.0"
+  worker_type       = var.glue_worker_type
+  number_of_workers = var.glue_worker_count
+  max_retries       = 0
+  timeout           = 30
 
-  tags = {
-    Job = "bronze-ingestion"
+  command {
+    name            = "glueetl"
+    python_version  = "3"
+    script_location = "s3://${aws_s3_bucket.lakehouse.id}/${aws_s3_object.schema_evolution_script.key}"
   }
-}
-
-resource "aws_cloudwatch_log_group" "silver_job_logs" {
-  name              = "/aws-glue/jobs/${aws_glue_job.silver_transformation.name}"
-  retention_in_days = 7
-
-  tags = {
-    Job = "silver-transformation"
-  }
+  default_arguments = local.glue_common_arguments
 }

@@ -15,8 +15,10 @@ queries and does not accept arbitrary SQL.
 
 Credential-independent fixture tests cover the 2024 source contract, Bronze
 metadata, Silver validation/quarantine, deterministic `trip_id`, Gold graph,
-and all five DuckDB queries. AWS execution, physical Iceberg snapshots, dbt
-build/test against Glue, and DuckDB reads from S3 are **NOT VERIFIED**.
+the explicit quality gate, Airflow DAG structure, three-month planning, and all
+five DuckDB queries. AWS execution, real Airflow scheduling, physical Iceberg
+snapshots, dbt build/test against Glue, and DuckDB reads from S3 are **NOT
+VERIFIED**.
 
 Milestone A deliberately targets one month first (`2024-01`). Four consecutive
 2024 Parquet files may remain in ignored `data/` for the later full junior
@@ -88,7 +90,16 @@ These commands are an operator runbook, not evidence that AWS has been run.
    Pop-Location
    ```
 
-6. After dbt tests pass, provide the six validated Gold Iceberg table S3
+6. Run `etl/glue_jobs/nyc_quality_checkpoint.py` after dbt succeeds. It blocks
+   promotion if Bronze does not reconcile to Silver plus quarantine, Silver
+   `trip_id` is duplicated, quarantine lacks a reason, or Gold facts do not
+   reconcile to valid Silver rows.
+
+   ```powershell
+   aws glue start-job-run --job-name <nyc-quality-checkpoint-job> --arguments '{"--SOURCE_YEAR":"2024","--SOURCE_MONTH":"1"}'
+   ```
+
+7. After the quality gate passes, provide the six validated Gold Iceberg table S3
    locations to `DuckDBGoldConsumer.from_iceberg_locations(...)` and run only
    members of `QueryName`. The DuckDB host needs the Iceberg extension installed
    and an AWS credential chain with read-only S3/catalog permissions.
@@ -96,6 +107,19 @@ These commands are an operator runbook, not evidence that AWS has been run.
 Do not advance to another month until the selected month reconciles from valid
 Silver rows through `fct_trips` and the five fixed queries return reviewed
 results.
+
+## Phase 5 manual orchestration
+
+`etl/dags/nyc_hvfhs_monthly_dag.py` defines the manually triggered Airflow 3
+DAG `nyc_hvfhs_monthly` with `year`, `month`, and `force` parameters. Its task
+order is `prepare_month -> bronze_ingestion -> silver_transform -> dbt_build ->
+quality_checkpoint`. `nyc_hvfhs_three_month_backfill` triggers three monthly
+runs in sequence, starting at a month no later than October.
+
+`force` is a same-source retry signal, not permission to replace a source with a
+different checksum. The deployed Airflow instance must hold the documented
+source checksums and sizes as Variables; no cloud scheduler, retry, clear, or
+backfill run has been executed yet.
 
 ## Gold and query contract
 
@@ -108,6 +132,19 @@ Gold contains exactly `dim_date`, `dim_operator`, `dim_zone`, `fct_trips`,
 4. fare and driver-pay reconciliation;
 5. `EXPLAIN ANALYZE` for a filtered fact query.
 
+## Terraform, CI, and advanced lifecycle
+
+Phase 6 supplies minimal NYC-only Terraform, a credential-independent CI
+workflow, and the approved bounded-cloud runbook in
+[CLOUD_DEMO_RUNBOOK.md](docs/CLOUD_DEMO_RUNBOOK.md). Terraform apply, AWS
+execution, evidence capture, and teardown are **NOT VERIFIED** until an
+approved disposable environment is used.
+
+Phase 7 supplies remote-only planning contracts for the 2025 congestion-fee
+schema addition, exact six-table snapshot manifests, pinned-reference handoff,
+threshold-based compaction decisions, retention dry runs, and orphan-file dry
+runs. No lifecycle operation deletes or rewrites canonical data locally.
+
 Start with [AGENTS.md](AGENTS.md), the
 [blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md), and the latest
-[phase report](docs/PHASE_4_REPORT.md).
+[phase report](docs/PHASE_7_REPORT.md).

@@ -14,13 +14,10 @@ botocore>=1.31.0
 dbt-core>=1.7.0
 dbt-glue>=1.7.0
 
-# Airflow
-apache-airflow>=2.7.0
-apache-airflow-providers-amazon>=8.13.0
+# Airflow 3 orchestration
+apache-airflow>=3.0,<4
+apache-airflow-providers-amazon>=9.0,<10
 apache-airflow-providers-apache-spark>=4.3.0
-
-# Data Quality
-great-expectations>=0.18.0
 
 # DuckDB (query engine)
 duckdb>=0.10.0

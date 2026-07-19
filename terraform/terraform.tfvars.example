@@ -1,13 +1,5 @@
-# Terraform Variables - Copy to terraform.tfvars and fill in values
-
-# AWS Configuration
-aws_region = "us-east-1"
-environment = "dev"
-
-# S3 Bucket (MUST be globally unique!)
-# Suggestion: instacart-lakehouse-<your-initials>-<random-suffix>
-s3_bucket_name = "instacart-lakehouse-xyz-12345"
-s3_raw_prefix  = "raw/instacart"
-
-# Project name (used as prefix for resources)
-project_name = "instacart-lakehouse"
+# Copy to terraform.tfvars locally; never commit credentials or state.
+aws_region     = "us-east-1"
+environment    = "dev"
+project_name   = "nyc-hvfhs-lakehouse"
+s3_bucket_name = "<globally-unique-private-bucket>"
