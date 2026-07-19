@@ -1,22 +1,27 @@
-# dbt Profile for AWS Glue
-instacart_lakehouse:
+nyc_hvfhs_lakehouse:
   target: glue
   outputs:
     glue:
       type: glue
-      query-comment: "dbt-glue for Instacart Lakehouse"
+      query-comment: "dbt-glue for NYC HVFHV Lakehouse"
       role_arn: "{{ env_var('GLUE_ROLE_ARN') }}"
-      region: "{{ env_var('AWS_REGION') }}"
+      region: "{{ env_var('AWS_REGION', 'us-east-1') }}"
       workers: 2
       worker_type: G.1X
       glue_version: "4.0"
       session_provisioning_timeout_in_seconds: 300
       location: "{{ env_var('S3_GOLD_PATH') }}"
-      database: "{{ env_var('GLUE_DATABASE') }}"
+      database: glue_catalog
       schema: gold
-      
-      # Iceberg configuration
       conf:
         spark.sql.catalog.glue_catalog: org.apache.iceberg.spark.SparkCatalog
         spark.sql.catalog.glue_catalog.catalog-impl: org.apache.iceberg.aws.glue.GlueCatalog
         spark.sql.extensions: org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+
+    # Credential-independent parser target. Never run or compile with this
+    # target because the session adapter starts local Spark.
+    local_parse:
+      type: spark
+      method: session
+      host: local
+      schema: gold

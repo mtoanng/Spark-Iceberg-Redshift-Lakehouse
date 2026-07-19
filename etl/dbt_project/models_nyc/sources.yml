@@ -1,0 +1,29 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Source-faithful NYC TLC lookup data in Iceberg.
+    schema: bronze
+    tables:
+      - name: bronze_taxi_zones
+        columns:
+          - name: LocationID
+            data_tests:
+              - not_null
+
+  - name: silver
+    description: Validated, deduplicated NYC HVFHV trips in Iceberg.
+    schema: silver
+    tables:
+      - name: silver_trips
+        columns:
+          - name: trip_id
+            data_tests:
+              - unique
+              - not_null
+          - name: pickup_datetime
+            data_tests:
+              - not_null
+          - name: dropoff_datetime
+            data_tests:
+              - not_null

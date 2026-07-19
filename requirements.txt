@@ -22,22 +22,8 @@ apache-airflow-providers-apache-spark>=4.3.0
 # Data Quality
 great-expectations>=0.18.0
 
-# Kaggle API
-kaggle>=1.5.16
-
-# MongoDB (metadata catalog)
-pymongo>=4.5.0
-
 # DuckDB (query engine)
 duckdb>=0.10.0
-
-# FastAPI (warehouse service)
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
-
-# SQL validation (AST-based read-only enforcement)
-sqlglot>=23.0.0
 
 # HTTP client
 requests>=2.31.0

@@ -142,7 +142,7 @@ A phase cannot start if previous phase report contains:
 - NOT VERIFIED
 - FAILED
 
-unless the user explicitly overrides.
+unless the user explicitly overrides.(Learning can be saved for later)
 
 ## Verification
 
