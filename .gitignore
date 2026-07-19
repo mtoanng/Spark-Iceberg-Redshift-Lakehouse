@@ -45,6 +45,11 @@ data/
 *.parquet
 *.json
 !dbt_instacart/**/*.json
+!tests/
+!tests/fixtures/
+!tests/fixtures/**/*.json
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.parquet
 
 # GCP Credentials
 credentials/
@@ -53,6 +58,13 @@ credentials/
 !terraform/**/*.json
 .gcp/
 service-account-*.json
+
+# Deterministic source-contract fixtures only; production data remains ignored.
+!tests/
+!tests/fixtures/
+!tests/fixtures/**/*.json
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.parquet
 
 # Terraform
 terraform/.terraform/

@@ -1,0 +1,25 @@
+{
+  "source_year": 2025,
+  "source_month": 1,
+  "records": [
+    {
+      "hvfhs_license_num": "HV0003",
+      "dispatching_base_num": "B03404",
+      "request_datetime": "2025-01-15T08:00:00",
+      "pickup_datetime": "2025-01-15T08:05:00",
+      "dropoff_datetime": "2025-01-15T08:25:00",
+      "PULocationID": 1,
+      "DOLocationID": 2,
+      "trip_miles": 4.2,
+      "trip_time": 1200,
+      "base_passenger_fare": 18.5,
+      "tolls": 0.0,
+      "sales_tax": 0.0,
+      "tips": 3.0,
+      "driver_pay": 11.5,
+      "shared_request_flag": "N",
+      "shared_match_flag": "N",
+      "cbd_congestion_fee": 0.75
+    }
+  ]
+}
