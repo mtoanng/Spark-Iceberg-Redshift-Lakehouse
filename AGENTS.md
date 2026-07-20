@@ -121,6 +121,8 @@ Rules:
 * Use AWS trials/credits only after code, tests, Terraform validation, smoke scripts, and teardown instructions are ready.
 * Start with one month, then three months; full 2024 is optional.
 
+
+
 ## Learning rule
 
 For each phase:
@@ -186,3 +188,44 @@ End every run with:
 7. the student learning task;
 8. three teach-back questions;
 9. confirmation that no later phase was started.
+
+
+
+# Final Release Gates
+
+The project is not complete when individual implementation phases pass.
+
+After all implementation phases, the agent must complete:
+
+1. Final End-to-End Release Verification
+2. Deployment and Operational Handover
+
+A release must not be tagged as complete while the core execution path contains:
+
+- NOT VERIFIED
+- NOT SATISFIED
+- FAILED
+- SKIPPED without an approved reason
+
+## End-to-End Rules
+
+- Test the complete data path, not isolated components.
+- Use deterministic bounded input.
+- Reconcile input, accepted, rejected, and output records.
+- Validate business results using an independent computation.
+- Verify retry or recovery behavior.
+- Store evidence under docs/evidence/final-e2e/.
+- Do not claim exactly-once behavior without supporting evidence.
+- Do not claim production readiness.
+
+## Deployment Rules
+
+- Provide local-smoke and cloud-demo profiles.
+- Do not add new infrastructure technologies.
+- Document prerequisites, secrets, deployment, verification,
+  rollback, troubleshooting, and teardown.
+- Deployment must be reproducible from a fresh environment.
+- Secrets must never be committed.
+- Cloud deployment is VERIFIED only after a real successful run.
+- A successful Terraform plan is not proof of deployment.
+- A service starting is not proof that the data pipeline works.

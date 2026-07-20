@@ -1,5 +1,7 @@
 # NYC High-Volume Ride-Hailing Lakehouse
 
+For a file-by-file navigation map, see the [codebase index](docs/CODEBASE_INDEX.md).
+
 Milestone A implements the one-month code path:
 
 ```text
