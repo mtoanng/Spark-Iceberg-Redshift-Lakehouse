@@ -1,6 +1,6 @@
 # PROJECT 2 — JUNIOR-FIRST IMPLEMENTATION BLUEPRINT
 
-Repository: `mtoanng/Spark-Iceberg-DuckDB-Lakehouse`
+Repository: `mtoanng/AWS-Iceberg-Athena-Lakehouse`
 
 Target name: **NYC High-Volume Ride-Hailing Lakehouse**
 
