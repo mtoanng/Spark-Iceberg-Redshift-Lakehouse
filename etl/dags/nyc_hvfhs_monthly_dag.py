@@ -1,7 +1,7 @@
 """Manual Airflow 3 orchestration for the NYC HVFHV lakehouse.
 
 The monthly DAG processes exactly one immutable month. The companion backfill
-DAG triggers three such runs sequentially. Neither DAG contains transformation
+DAG triggers four such runs sequentially. Neither DAG contains transformation
 logic; Glue, dbt, and the quality checkpoint own that work.
 """
 
@@ -22,7 +22,7 @@ from etl.sources.nyc_hvfhs import SourceFile, monthly_trip_filename
 
 
 MONTHLY_DAG_ID = "nyc_hvfhs_monthly"
-BACKFILL_DAG_ID = "nyc_hvfhs_three_month_backfill"
+BACKFILL_DAG_ID = "nyc_hvfhs_four_month_backfill"
 
 DEFAULT_ARGS = {
     "owner": "data-engineering",
@@ -40,7 +40,9 @@ def _prepare_month(year: int, month: int, force: bool) -> dict[str, object]:
     filename = monthly_trip_filename(request.year, request.month)
     landing_uri = Variable.get("nyc_landing_uri").rstrip("/")
     checksum = Variable.get(f"nyc_hvfhs_{request.year}_{request.month:02d}_sha256")
-    size_bytes = int(Variable.get(f"nyc_hvfhs_{request.year}_{request.month:02d}_size_bytes"))
+    size_bytes = int(
+        Variable.get(f"nyc_hvfhs_{request.year}_{request.month:02d}_size_bytes")
+    )
     source = SourceFile(
         source_year=request.year,
         source_month=request.month,
@@ -103,6 +105,21 @@ with DAG(
             "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
             "--TAXI_ZONE_URI": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_uri'] }}",
             "--TAXI_ZONE_CHECKSUM": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_checksum'] }}",
+            "--SOURCE_SIZE_BYTES": "{{ ti.xcom_pull(task_ids='prepare_month')['source_size_bytes'] }}",
+            "--FORCE": "{{ ti.xcom_pull(task_ids='prepare_month')['force'] }}",
+        },
+        aws_conn_id="aws_default",
+        wait_for_completion=True,
+        verbose=True,
+    )
+
+    great_expectations_checkpoint = GlueJobOperator(
+        task_id="great_expectations_checkpoint",
+        job_name="{{ var.value.nyc_great_expectations_job_name }}",
+        script_args={
+            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
         },
         aws_conn_id="aws_default",
         wait_for_completion=True,
@@ -112,6 +129,11 @@ with DAG(
     silver_transform = GlueJobOperator(
         task_id="silver_transform",
         job_name="{{ var.value.nyc_silver_job_name }}",
+        script_args={
+            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+        },
         aws_conn_id="aws_default",
         wait_for_completion=True,
         verbose=True,
@@ -137,20 +159,59 @@ with DAG(
         verbose=True,
     )
 
-    prepare_month >> bronze_ingestion >> silver_transform >> dbt_build >> quality_checkpoint
+    publication_manifest = BashOperator(
+        task_id="publication_manifest",
+        bash_command=(
+            "python -m scripts.publish_publication_manifest "
+            "--manifest-uri '{{ var.value.nyc_manifest_uri }}' "
+            "--source-uri \"{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}\" "
+            "--ingestion-run-id \"{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}\" "
+            "--source-year {{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }} "
+            "--source-month {{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }} "
+            "--gold-row-count {{ var.value.nyc_gold_row_count }} --validated"
+        ),
+    )
+
+    athena_smoke = BashOperator(
+        task_id="athena_smoke",
+        bash_command=(
+            'if [ "${ATHENA_SMOKE_ENABLED:-false}" != "true" ]; then '
+            "echo 'Athena smoke command deferred; set ATHENA_SMOKE_ENABLED=true in approved cloud config.'; "
+            "else python -m athena.verify_gold "
+            "--year {{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }} "
+            "--month {{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }} "
+            "--database $GLUE_GOLD_DATABASE --workgroup $ATHENA_WORKGROUP; fi"
+        ),
+        env={
+            "GLUE_GOLD_DATABASE": "{{ var.value.glue_gold_database }}",
+            "ATHENA_WORKGROUP": "{{ var.value.athena_workgroup }}",
+            "ATHENA_SMOKE_ENABLED": "{{ var.value.athena_smoke_enabled | default('false') }}",
+        },
+    )
+
+    (
+        prepare_month
+        >> bronze_ingestion
+        >> great_expectations_checkpoint
+        >> silver_transform
+        >> dbt_build
+        >> quality_checkpoint
+        >> publication_manifest
+        >> athena_smoke
+    )
 
 
 def _backfill_params() -> dict[str, Param]:
     return {
         "year": Param(2024, type="integer", minimum=2019, maximum=2099),
-        "month": Param(1, type="integer", minimum=1, maximum=10),
+        "month": Param(1, type="integer", minimum=1, maximum=9),
         "force": Param(False, type="boolean"),
     }
 
 
 with DAG(
     dag_id=BACKFILL_DAG_ID,
-    description="Manually trigger three consecutive NYC HVFHV monthly runs in order.",
+    description="Manually trigger four consecutive NYC HVFHV monthly runs in order.",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
@@ -159,11 +220,15 @@ with DAG(
     params=_backfill_params(),
     render_template_as_native_obj=True,
     tags=["nyc", "hvfhs", "iceberg", "manual", "backfill"],
-) as nyc_hvfhs_three_month_backfill_dag:
+) as nyc_hvfhs_four_month_backfill_dag:
     trigger_month_1 = TriggerDagRunOperator(
         task_id="trigger_month_1",
         trigger_dag_id=MONTHLY_DAG_ID,
-        conf={"year": "{{ params.year }}", "month": "{{ params.month }}", "force": "{{ params.force }}"},
+        conf={
+            "year": "{{ params.year }}",
+            "month": "{{ params.month }}",
+            "force": "{{ params.force }}",
+        },
         wait_for_completion=True,
     )
     trigger_month_2 = TriggerDagRunOperator(
@@ -187,7 +252,18 @@ with DAG(
         wait_for_completion=True,
     )
 
-    trigger_month_1 >> trigger_month_2 >> trigger_month_3
+    trigger_month_4 = TriggerDagRunOperator(
+        task_id="trigger_month_4",
+        trigger_dag_id=MONTHLY_DAG_ID,
+        conf={
+            "year": "{{ params.year }}",
+            "month": "{{ (params.month | int) + 3 }}",
+            "force": "{{ params.force }}",
+        },
+        wait_for_completion=True,
+    )
+
+    trigger_month_1 >> trigger_month_2 >> trigger_month_3 >> trigger_month_4
 
 
 nyc_hvfhs_monthly_dag.doc_md = """
@@ -195,6 +271,6 @@ nyc_hvfhs_monthly_dag.doc_md = """
 
 Manually trigger this DAG with `year`, `month`, and `force`. `force` only
 requests a retry of the same immutable source identity; a changed checksum must
-be blocked by the manifest contract. The quality checkpoint is the promotion
-gate after dbt Gold.
+be blocked by the manifest contract. Great Expectations is the mandatory
+promotion gate before Silver; the post-Gold quality task is reconciliation.
 """

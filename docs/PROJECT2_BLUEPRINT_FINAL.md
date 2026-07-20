@@ -4,7 +4,7 @@ Repository: `mtoanng/Spark-Iceberg-DuckDB-Lakehouse`
 
 Target name: **NYC High-Volume Ride-Hailing Lakehouse**
 
-Status: **Final architecture, junior-first delivery plan**
+Status: **Final architecture, junior-first delivery plan; Athena migration recorded 2026-07-21**
 
 This file is the source of truth for Project 2. The final platform represents durable batch and lakehouse architecture, but the first release must remain small enough to complete, run, and explain as a junior Data Engineer.
 
@@ -17,21 +17,26 @@ Build a monthly batch lakehouse from official NYC TLC High Volume For-Hire Vehic
 The first mandatory path is:
 
 ```text
-one monthly Parquet file
--> S3 landing
--> AWS Glue/PySpark
--> Iceberg Bronze and Silver
--> dbt Gold
--> DuckDB read-only analytics
+one monthly Parquet file plus Taxi Zone lookup
+-> S3 Landing
+-> Airflow 3
+-> Glue/PySpark Bronze ingestion
+-> Iceberg Bronze
+-> mandatory Great Expectations checkpoint
+-> Glue/PySpark Silver transformation
+-> Iceberg Silver and quarantine
+-> dbt-glue Gold
+-> publication manifest
+-> Amazon Athena analytical serving
 ```
 
 Then add:
 
 ```text
 Airflow 3 orchestration
-basic data quality
+mandatory Great Expectations and publication reconciliation
 idempotent reruns
-three-month backfill
+four-month backfill
 Terraform and CI
 ```
 
@@ -85,8 +90,15 @@ AWS Glue / PySpark
         +------------------> Iceberg Bronze
         |                    source-faithful + ingestion metadata
         |
+        v
+Mandatory Great Expectations checkpoint
+        |
+        v
+Glue/PySpark Silver transformation
+        |
         +------------------> Iceberg Silver
-                             validated trips + quarantine
+        |                    validated trips
+        +------------------> Iceberg quarantine
         |
         v
 dbt-glue Gold
@@ -96,15 +108,10 @@ dbt-glue Gold
   - fct_trips
   - mart_hourly_zone_demand
   - mart_operator_metrics
-        |
-        v
-Basic quality gates
-        |
-        v
 Publication manifest
         |
         v
-DuckDB read-only analytical consumer
+Amazon Athena analytical serving
 ```
 
 Advanced extensions:
@@ -127,15 +134,17 @@ larger backfills
 - S3.
 - Apache Iceberg.
 - dbt-glue.
-- DuckDB read-only consumer.
+- Great Expectations checkpoint between Bronze and Silver.
+- Publication manifest for validated Gold tables and counts.
+- Amazon Athena read-only analytical serving.
 
 ### Required for the full junior project
 
 - Airflow 3 manually triggered DAG.
-- Basic Great Expectations checkpoint or equivalent explicit quality gate.
+- Mandatory Great Expectations checkpoint between Bronze and Silver.
 - Terraform for S3, Glue, Catalog, and IAM resources used.
-- CI for Python, DAG, dbt, DuckDB queries, and Terraform.
-- Idempotent three-month processing.
+- CI for Python, DAG, dbt, Great Expectations, Athena SQL/runner contracts, and Terraform.
+- Idempotent four-month processing.
 
 ### Advanced extension
 
@@ -245,7 +254,7 @@ mart_hourly_zone_demand
 mart_operator_metrics
 ```
 
-Do not create more marts until these are tested and used by DuckDB queries.
+Do not create more marts until these are tested and used by the bounded Athena query pack.
 
 ---
 
@@ -275,42 +284,43 @@ Rules:
 - Bronze, Silver, quarantine, and Gold row counts are recorded;
 - reconciliation must explain rejected rows.
 
-### Quality gates
+### Mandatory Great Expectations checkpoint
 
-Junior quality gates are intentionally limited:
+The checkpoint runs after month-scoped Bronze publication and before Silver.
+It is blocking: a failed expectation fails the Airflow task and prevents the
+Silver task from starting. It validates source schema, required timestamps,
+timestamp ordering, non-negative measures, and resolvable Taxi Zone IDs.
 
-- source file exists and schema contains required columns;
-- primary timestamps are non-null;
-- valid trip time ordering;
-- non-negative numeric metrics;
-- zone relationships resolve;
-- `fct_trips.trip_id` is unique and not null;
-- Gold row count reconciles with valid Silver rows.
+Great Expectations does not silently remove invalid records. Bronze remains
+source-faithful; the Silver transformation applies the same rule contract and
+writes invalid rows to `quarantine_trips` with deterministic reason codes.
+Therefore the checkpoint protects the transformation boundary while quarantine
+preserves row-level evidence. The post-Gold quality/reconciliation task is a
+separate publication check, not a substitute for this checkpoint.
 
-One Great Expectations checkpoint is enough for the junior version. dbt tests cover Gold models.
+### Publication manifest
 
----
+After dbt-glue succeeds, publish a durable manifest containing the source
+identity, run ID, Gold table locations, Iceberg snapshot IDs when available,
+row counts, and validation status. Athena reads only a manifest marked
+validated.
 
-## 7. DuckDB contract
+### Athena contract
 
-DuckDB is not the source of truth.
+Athena is the bounded read-only serving layer over Glue-cataloged Gold Iceberg
+tables. The minimal scope is exactly:
 
-It must:
+1. one Gold smoke query;
+2. one representative business mart query;
+3. one Iceberg history/snapshots metadata query;
+4. one parameterized version-travel template.
 
-- read the published Iceberg Gold tables;
-- execute a fixed query pack;
-- never mutate canonical Iceberg data;
-- optionally use a local cache only for offline demonstration.
-
-Required queries:
-
-1. hourly pickups by zone;
-2. operator trip count and average fare;
-3. top pickup zones for the selected month;
-4. basic fare and driver-pay reconciliation;
-5. `EXPLAIN ANALYZE` for one filtered query.
-
-The junior version may read the latest validated snapshot. Exact snapshot pinning is added in the advanced extension.
+Terraform creates one workgroup using an existing project-bucket result prefix,
+SSE-S3, CloudWatch query metrics, a configurable per-query scan cutoff, and one
+least-privilege Gold/Glue-read and result-prefix-write policy. Python provides
+one generic Boto3 runner and one minimal Gold smoke verifier. Lake Formation,
+customer-managed KMS, a dedicated result bucket, dashboards, alarms, evidence
+export, and a generic query-testing framework are explicitly deferred.
 
 ---
 
@@ -327,7 +337,7 @@ Deliver:
 5. Iceberg tables in Glue Catalog;
 6. dbt Gold dimensions, fact, and two marts;
 7. dbt tests;
-8. DuckDB fixed query pack;
+8. Athena smoke query, business mart query, history/snapshots query, and time-travel template;
 9. README with exact run order.
 
 Acceptance criteria:
@@ -336,7 +346,7 @@ Acceptance criteria:
 - invalid fixture rows appear in quarantine with reason codes;
 - rerunning the same fixture does not duplicate `fct_trips`;
 - Gold counts reconcile with valid Silver rows;
-- all DuckDB queries return expected fixture results;
+- Athena SQL and Boto3 runner contracts pass credential-independent tests;
 - all credential-independent checks pass.
 
 Milestone A is sufficient for the first resume-ready release.
@@ -348,7 +358,7 @@ Implement after Milestone A.
 Deliver:
 
 1. Airflow 3 manually triggered DAG;
-2. three-month sequential backfill;
+2. four-month sequential backfill;
 3. source manifest and run audit;
 4. one Great Expectations checkpoint;
 5. Terraform for the required AWS resources;
@@ -359,10 +369,10 @@ Deliver:
 Acceptance criteria:
 
 - the DAG runs one month from parameter input;
-- three months process without duplicate canonical rows;
+- four months process without duplicate canonical rows;
 - a failed task can be cleared and rerun safely;
 - Terraform validates and resources are destroyable;
-- evidence includes Airflow/Glue logs, Iceberg table snapshots, dbt test output, and DuckDB results.
+- evidence includes Airflow/Glue logs, Great Expectations results, Iceberg table snapshots, dbt test output, publication manifest, and Athena results.
 
 Milestone B is the junior Definition of Done.
 
@@ -374,7 +384,7 @@ Deliver:
 
 1. ingest one 2025 month and evolve the Iceberg schema;
 2. publish exact snapshot IDs;
-3. query a pinned snapshot with DuckDB when supported by the chosen catalog path;
+3. retain exact snapshot IDs and keep a manual Athena version-travel query template;
 4. collect file metrics;
 5. compact only when thresholds are exceeded;
 6. expire snapshots safely;
@@ -420,21 +430,23 @@ Student learning task: decide what belongs in Bronze versus Silver.
 
 Student learning task: explain the grain of `fct_trips` and each mart.
 
-### Phase 4 — DuckDB consumer and MVP documentation
+### Phase 4 — Athena serving contract and MVP documentation
 
-- add fixed queries and `EXPLAIN ANALYZE`;
-- add smoke test;
+- define the four bounded Athena SQL artifacts;
+- add the generic Boto3 runner and minimal Gold smoke verifier contract;
 - remove active ML/MongoDB/query-API documentation;
 - produce Milestone A README.
 
-Student learning task: explain why DuckDB is a consumer, not the warehouse.
+Student learning task: explain why Athena is a read-only serving layer while
+Glue Catalog and Iceberg remain canonical.
 
-### Phase 5 — Airflow, quality, three-month rerun
+### Phase 5 — Airflow, quality, four-month rerun
 
 - add Airflow 3 DAG with `year`, `month`, and `force` parameters;
-- add one quality checkpoint;
+- add the mandatory Great Expectations checkpoint between Bronze and Silver;
+- keep post-Gold reconciliation separate from Great Expectations;
 - verify retry, clear, and idempotent rerun;
-- process three months sequentially.
+- process four months sequentially.
 
 Student learning task: explain retry versus rerun versus backfill.
 
@@ -466,7 +478,7 @@ The laptop is a thin client.
 - edit code;
 - run pure-function and fixture tests;
 - run dbt parse/compile when possible;
-- run DuckDB query tests;
+- run Athena SQL/runner contract tests with mocks;
 - validate Terraform;
 - do not run full Spark or Airflow locally.
 
@@ -483,7 +495,7 @@ Use Codespaces or another disposable environment for:
 
 Use AWS Glue, S3, and Glue Catalog only after code and smoke scripts are ready.
 
-Start with one month, then three months. Do not run a full year until the junior Definition of Done passes.
+Start with one month, then four months. Do not run a full year until the junior Definition of Done passes.
 
 ---
 
@@ -497,7 +509,8 @@ Minimum junior test set:
 - deterministic `trip_id` and deduplication;
 - reconciliation counts;
 - dbt uniqueness, not-null, and relationship tests;
-- DuckDB fixed-query expected results;
+- Great Expectations checkpoint contract results;
+- Athena fixed-scope query/runner expected results;
 - Airflow DAG import/structure test;
 - idempotent rerun test;
 - Terraform `fmt -check` and `validate`.
@@ -511,13 +524,13 @@ One controlled failure or rerun experiment is required per phase after Phase 1.
 The project is complete for the junior stage when:
 
 1. Milestone A and B pass.
-2. One month and a three-month sequence have real evidence.
+2. One month and a four-month sequence have real evidence.
 3. The same source can be rerun without duplicate canonical rows.
-4. Bronze, Silver, quarantine, Gold, and DuckDB results reconcile.
+4. Bronze, Silver, quarantine, Gold, publication manifest, and Athena smoke results reconcile.
 5. Airflow can retry or clear a failed task safely.
 6. Terraform resources are destroyable.
 7. README claims only implemented and verified features.
-8. The user can explain ingestion grain, idempotency, Bronze/Silver boundaries, fact grain, Iceberg snapshots, Airflow reruns, and DuckDB's role.
+8. The user can explain ingestion grain, idempotency, Bronze/Silver boundaries, Great Expectations blocking behavior, fact grain, Iceberg snapshots, Airflow reruns, publication manifests, and Athena's role.
 
 2025 schema evolution and Iceberg lifecycle maintenance are advanced extensions, not junior completion requirements.
 
@@ -537,15 +550,23 @@ etl/
     silver_transform.py
   quality/
   dbt_project/
-consumer/
-  duckdb_consumer.py
-  queries/
+athena/
+  query_runner.py
+  verify_gold.py
+  sql/
+    gold_smoke.sql
+    mart_hourly_zone_demand.sql
+    iceberg_history.sql
+    time_travel.sql.tmpl
 infra/
   terraform/
 scripts/
   fetch_source.py
+  prepare_manifest.py
+  upload_release_dataset.py
   run_fixture_demo.py
   verify_reconciliation.py
+  verify_teardown.py
   teardown_demo.sh
 tests/
   fixtures/
@@ -558,7 +579,9 @@ docs/
 legacy/
 ```
 
-Advanced Iceberg maintenance files may be added only in Phase 7.
+Advanced Iceberg maintenance files may be added only in Phase 7. Athena is the
+only active analytical serving path; no alternate query-engine directory is
+part of the target structure.
 
 ---
 
@@ -572,3 +595,94 @@ Advanced Iceberg maintenance files may be added only in Phase 7.
 - Never provision AWS resources without explicit approval.
 - Never claim idempotency, schema evolution, snapshot pinning, performance, or recovery without evidence.
 - End each run with changed files, commands, results, blockers, one student learning task, and three teach-back questions.
+
+---
+
+## 15. Deployment-preservation contract
+
+The following responsibilities remain mandatory even when their cloud execution
+is not verified:
+
+- **Durable source manifests:** persist one immutable row per source month with
+  URI, checksum, size, status, stable run ID, timestamps, and Bronze/Silver/
+  quarantine/Gold counts.
+- **Retry-safe writes:** a task retry or deterministic monthly rerun may not
+  duplicate canonical Bronze, Silver, quarantine, Gold, or publication rows.
+  A changed checksum is blocked until an explicit replacement workflow exists.
+- **Namespace/catalog wiring:** one documented Glue Data Catalog name and
+  database/namespace mapping must be consumed consistently by Glue, Iceberg,
+  dbt-glue, the publication manifest, and Athena.
+- **Instance-profile authentication:** the temporary Airflow/query runner uses
+  an EC2 instance profile and the AWS SDK default credential chain. No static
+  keys are stored in Terraform, user data, `.env.cloud.example`, or DAG code.
+- **Deployment packaging:** every imported Glue Python module, dbt project,
+  Athena SQL artifact, and Airflow DAG dependency is included in the reviewed
+  deployment bundle or fetched from the pinned repository revision.
+- **E2E scripts:** smoke and release profiles must upload only manifest-pinned
+  official sources, run one month before the four-month release, and reconcile
+  source, Bronze, Silver, quarantine, Gold, manifest, and Athena outputs.
+- **Teardown verification:** teardown must verify the temporary runner, Glue
+  jobs, IAM role/profile, workgroup, and non-canonical temporary prefixes are
+  absent. Canonical data is never recursively deleted by default.
+
+These are code and documentation obligations, not claims that AWS has run.
+
+## 16. Release gates
+
+### CODEBASE-READY
+
+This gate is satisfied only when the repository can be reviewed from a fresh
+checkout and:
+
+1. the active architecture and all active docs use the path in Section 3;
+2. Great Expectations is an explicit blocking Bronze-to-Silver checkpoint;
+3. source manifests, retry-safe write contracts, namespace wiring, instance-
+   profile authentication, deployment packaging, E2E scripts, and teardown
+   verification are present;
+4. the minimal Athena Terraform, SQL, Boto3 runner, and smoke verifier scope
+   is implemented and tested without credentials;
+5. CI, Python/unit/fixture tests, dbt parse, Airflow topology checks, SQL
+   checks, and Terraform validation pass;
+6. no secret, state, saved plan, production source file, or obsolete serving
+   path is active or tracked;
+7. documentation says AWS execution is **NOT VERIFIED**.
+
+### DEPLOYMENT-VERIFIED
+
+This gate is separate and remains **NOT VERIFIED** until a bounded approved AWS
+run retains evidence for:
+
+1. Terraform plan and apply outputs for the temporary stack;
+2. instance-profile authentication from the Airflow/query runner;
+3. official source upload and checksum/size manifest;
+4. Bronze ingestion, Great Expectations pass/block behavior, Silver quarantine,
+   dbt-glue Gold publication, and manifest status;
+5. Athena Gold smoke/business/history queries, query IDs, scanned bytes, and
+   result locations;
+6. controlled retry, clear, deterministic rerun, and four-month sequence;
+7. reconciliation of source, accepted, rejected, Gold, manifest, and Athena
+   results;
+8. teardown output proving temporary infrastructure is gone.
+
+A passing Terraform plan, a running service, or a successful isolated query is
+not deployment verification.
+
+## 17. Migration and change log
+
+This documentation migration changes the active architecture only; it does not
+delete or move implementation artifacts.
+
+| Former active item | Athena-era replacement | Disposition |
+| --- | --- | --- |
+| DuckDB consumer and five fixed queries | Athena Gold smoke, business mart, history/snapshots, and version-travel template | Reclassify as historical/conflicting; remove only in a separately approved cleanup after Athena tests pass. |
+| Phase 4 DuckDB consumer phase | Athena serving-contract phase | Blueprint terminology migrated; Phase 4 report remains historical. |
+| DuckDB smoke tests and Gold fixture | Mocked Boto3 runner and minimal Gold smoke-verifier tests | Replacement required; no code change in this documentation pass. |
+| Post-Gold equivalent quality checkpoint | Mandatory Great Expectations checkpoint before Silver plus a separately named post-Gold publication reconciliation | Preserve useful assertions, but do not call them the Great Expectations checkpoint. |
+| “latest validated snapshot” consumer wording | Durable publication manifest consumed by Athena | Manifest must identify table locations, status, counts, and snapshot IDs when available. |
+| Local DuckDB cache and Iceberg scan path | Athena workgroup with existing-bucket results prefix and SSE-S3 | No dedicated results bucket, KMS key management, or Lake Formation in this scope. |
+| DuckDB role in learning tasks and Definition of Done | Athena bounded-serving role and Glue Catalog/Iceberg canonical role | Active teach-back language migrated; historical reports are not rewritten. |
+
+Deferred by explicit decision: Lake Formation, customer-managed KMS, dedicated
+Athena results bucket, dashboards, alarms, evidence exporter, generic query
+testing framework, large query libraries, automated time-travel verification,
+and all real AWS execution evidence.

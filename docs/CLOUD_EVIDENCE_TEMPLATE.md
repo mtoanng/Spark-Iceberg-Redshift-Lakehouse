@@ -49,14 +49,15 @@ field with retained output.
 - Force/checksum decision:
 - Quality checkpoint run/log:
 - dbt build/test output:
-- DuckDB fixed-query output:
+- Great Expectations checkpoint output:
+- Athena query IDs, outputs, scanned bytes, and result locations:
 
 ## Lifecycle (Phase 7)
 
 - 2025 schema evolution run:
 - Snapshot manifest URI/checksum:
 - Exact snapshot IDs:
-- Pinned DuckDB query:
+- Manual Athena version-travel query:
 - File metrics:
 - Compaction decision:
 - Retention dry-run:

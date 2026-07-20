@@ -57,13 +57,19 @@ def audit_for_source(
     )
 
 
-def sequential_backfill_requests(year: int, first_month: int, *, force: bool = False) -> tuple[MonthlyRunRequest, ...]:
-    """Return exactly three ordered manual runs without crossing a year boundary."""
+def sequential_backfill_requests(
+    year: int, first_month: int, *, force: bool = False
+) -> tuple[MonthlyRunRequest, ...]:
+    """Return exactly four ordered manual runs without crossing a year boundary."""
 
     first = MonthlyRunRequest(year=year, month=first_month, force=force)
-    if first.month > 10:
-        raise SourceContractError("A three-month backfill must start no later than October.")
+    if first.month > 9:
+        raise SourceContractError(
+            "A four-month backfill must start no later than September."
+        )
     return tuple(
-        MonthlyRunRequest(year=first.year, month=first.month + offset, force=first.force)
-        for offset in range(3)
+        MonthlyRunRequest(
+            year=first.year, month=first.month + offset, force=first.force
+        )
+        for offset in range(4)
     )

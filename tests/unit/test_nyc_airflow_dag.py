@@ -55,8 +55,12 @@ def _fake_airflow_modules(monkeypatch):
         "airflow.models.param": types.SimpleNamespace(Param=FakeParam),
         "airflow.operators.bash": types.SimpleNamespace(BashOperator=FakeOperator),
         "airflow.operators.python": types.SimpleNamespace(PythonOperator=FakeOperator),
-        "airflow.operators.trigger_dagrun": types.SimpleNamespace(TriggerDagRunOperator=FakeOperator),
-        "airflow.providers.amazon.aws.operators.glue": types.SimpleNamespace(GlueJobOperator=FakeOperator),
+        "airflow.operators.trigger_dagrun": types.SimpleNamespace(
+            TriggerDagRunOperator=FakeOperator
+        ),
+        "airflow.providers.amazon.aws.operators.glue": types.SimpleNamespace(
+            GlueJobOperator=FakeOperator
+        ),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -74,17 +78,30 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert [task.task_id for task in monthly.tasks] == [
         "prepare_month",
         "bronze_ingestion",
+        "great_expectations_checkpoint",
         "silver_transform",
         "dbt_build",
         "quality_checkpoint",
+        "publication_manifest",
+        "athena_smoke",
     ]
     assert monthly.params["year"].default == 2024
     assert monthly.params["month"].default == 1
     assert monthly.params["force"].default is False
     assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion"}
-    assert monthly.tasks[3].downstream_task_ids == {"quality_checkpoint"}
+    assert monthly.tasks[1].downstream_task_ids == {"great_expectations_checkpoint"}
+    assert monthly.tasks[2].downstream_task_ids == {"silver_transform"}
+    assert monthly.tasks[4].downstream_task_ids == {"quality_checkpoint"}
+    assert monthly.tasks[5].downstream_task_ids == {"publication_manifest"}
+    assert monthly.tasks[6].downstream_task_ids == {"athena_smoke"}
 
-    backfill = module.nyc_hvfhs_three_month_backfill_dag
-    assert [task.task_id for task in backfill.tasks] == ["trigger_month_1", "trigger_month_2", "trigger_month_3"]
+    backfill = module.nyc_hvfhs_four_month_backfill_dag
+    assert [task.task_id for task in backfill.tasks] == [
+        "trigger_month_1",
+        "trigger_month_2",
+        "trigger_month_3",
+        "trigger_month_4",
+    ]
     assert backfill.tasks[0].downstream_task_ids == {"trigger_month_2"}
     assert backfill.tasks[1].downstream_task_ids == {"trigger_month_3"}
+    assert backfill.tasks[2].downstream_task_ids == {"trigger_month_4"}

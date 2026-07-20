@@ -2,7 +2,7 @@
 
 These functions plan safe operations and validate manifests. They do not call
 AWS, delete files, expire snapshots, or claim that a chosen catalog supports a
-particular DuckDB snapshot syntax.
+particular query-engine snapshot syntax.
 """
 
 from __future__ import annotations

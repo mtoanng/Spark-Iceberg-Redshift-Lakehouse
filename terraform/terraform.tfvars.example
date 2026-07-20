@@ -3,3 +3,10 @@ aws_region     = "us-east-1"
 environment    = "dev"
 project_name   = "nyc-hvfhs-lakehouse"
 s3_bucket_name = "<globally-unique-private-bucket>"
+athena_results_prefix       = "athena-results"
+athena_bytes_scanned_cutoff = 104857600
+glue_package_path            = "build/nyc_glue_jobs.zip"
+# Set these only for an approved disposable runner; leave empty for plan-only work.
+airflow_runner_ami_id       = ""
+airflow_runner_subnet_id    = ""
+airflow_runner_key_name     = ""

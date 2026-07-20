@@ -9,6 +9,7 @@ def test_locked_bronze_and_silver_tables_are_defined() -> None:
         "bronze.bronze_taxi_zones",
         "silver.silver_trips",
         "silver.quarantine_trips",
+        "ops.source_run_manifest",
     }
 
 
@@ -33,9 +34,36 @@ def test_silver_table_matches_trip_contract() -> None:
 
 def test_ddl_targets_glue_iceberg_v2_under_bounded_location() -> None:
     ddl = table_ddl(TABLE_SPECS[0], "s3://example-bucket/warehouse/")
-    assert ddl.startswith("CREATE TABLE IF NOT EXISTS glue_catalog.bronze.bronze_hvfhs_trips")
+    assert ddl.startswith(
+        "CREATE TABLE IF NOT EXISTS glue_catalog.bronze.bronze_hvfhs_trips"
+    )
     assert "USING iceberg" in ddl
     assert "PARTITIONED BY (_source_year, _source_month)" in ddl
     assert "LOCATION 's3://example-bucket/warehouse/bronze/bronze_hvfhs_trips'" in ddl
     assert "'format-version'='2'" in ddl
-    assert namespace_ddl("silver") == "CREATE NAMESPACE IF NOT EXISTS glue_catalog.silver"
+    assert (
+        namespace_ddl("silver") == "CREATE NAMESPACE IF NOT EXISTS glue_catalog.silver"
+    )
+
+
+def test_manifest_table_persists_source_identity_status_validation_and_reconciliation_counts() -> (
+    None
+):
+    spec = next(
+        spec for spec in TABLE_SPECS if spec.identifier == "ops.source_run_manifest"
+    )
+    columns = dict(spec.columns)
+    for column in (
+        "source_uri",
+        "source_checksum",
+        "source_size_bytes",
+        "ingestion_run_id",
+        "run_status",
+        "bronze_row_count",
+        "silver_row_count",
+        "quarantine_row_count",
+        "failure_message",
+        "validation_result_summary",
+    ):
+        assert column in columns
+    assert spec.partitioned_by == ("source_year", "source_month")

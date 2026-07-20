@@ -95,8 +95,11 @@ TABLE_SPECS = (
             ("service_zone", "STRING"),
         )
         + INGESTION_COLUMNS,
+        ("_source_year", "_source_month"),
     ),
-    TableSpec("silver", "silver_trips", SILVER_COLUMNS, ("source_year", "source_month")),
+    TableSpec(
+        "silver", "silver_trips", SILVER_COLUMNS, ("source_year", "source_month")
+    ),
     TableSpec(
         "silver",
         "quarantine_trips",
@@ -110,6 +113,31 @@ TABLE_SPECS = (
         ),
         ("_source_year", "_source_month"),
     ),
+    TableSpec(
+        "ops",
+        "source_run_manifest",
+        (
+            ("source_uri", "STRING"),
+            ("source_checksum", "STRING"),
+            ("source_size_bytes", "BIGINT"),
+            ("source_year", "INT"),
+            ("source_month", "INT"),
+            ("ingestion_run_id", "STRING"),
+            ("run_status", "STRING"),
+            ("first_seen_at", "TIMESTAMP"),
+            ("updated_at", "TIMESTAMP"),
+            ("bronze_row_count", "BIGINT"),
+            ("silver_row_count", "BIGINT"),
+            ("quarantine_row_count", "BIGINT"),
+            ("validation_status", "STRING"),
+            ("validation_result_uri", "STRING"),
+            ("validation_result_summary", "STRING"),
+            ("failure_stage", "STRING"),
+            ("failure_message", "STRING"),
+            ("completed_at", "TIMESTAMP"),
+        ),
+        ("source_year", "source_month"),
+    ),
 )
 
 
@@ -117,7 +145,9 @@ def namespace_ddl(namespace: str, *, catalog: str = "glue_catalog") -> str:
     return f"CREATE NAMESPACE IF NOT EXISTS {catalog}.{namespace}"
 
 
-def table_ddl(spec: TableSpec, warehouse_uri: str, *, catalog: str = "glue_catalog") -> str:
+def table_ddl(
+    spec: TableSpec, warehouse_uri: str, *, catalog: str = "glue_catalog"
+) -> str:
     location = f"{warehouse_uri.rstrip('/')}/{spec.namespace}/{spec.name}"
     column_sql = ",\n  ".join(f"{name} {data_type}" for name, data_type in spec.columns)
     partition_sql = ""

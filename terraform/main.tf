@@ -49,8 +49,8 @@ output "s3_warehouse_uri" {
 }
 
 output "glue_database_name" {
-  value       = aws_glue_catalog_database.nyc.name
-  description = "Glue Catalog database for the NYC lakehouse."
+  value       = { for name, database in aws_glue_catalog_database.namespace : name => database.name }
+  description = "Canonical Glue Catalog namespaces for the NYC lakehouse."
 }
 
 output "glue_role_arn" {
@@ -64,7 +64,13 @@ output "glue_job_names" {
     bronze                = aws_glue_job.bronze.name
     silver                = aws_glue_job.silver.name
     quality               = aws_glue_job.quality.name
+    great_expectations    = aws_glue_job.great_expectations.name
     schema_evolution_2025 = aws_glue_job.schema_evolution.name
   }
   description = "Glue jobs consumed by the Phase 5 Airflow DAG."
+}
+
+output "airflow_runner_instance_profile" {
+  value       = var.airflow_runner_ami_id == "" ? null : aws_iam_instance_profile.airflow_runner[0].name
+  description = "Instance profile used by the optional temporary Airflow runner."
 }

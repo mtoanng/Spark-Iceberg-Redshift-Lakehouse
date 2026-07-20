@@ -44,6 +44,28 @@ variable "warehouse_prefix" {
   default     = "warehouse"
 }
 
+variable "athena_results_prefix" {
+  type        = string
+  description = "Prefix in the existing project bucket for Athena query results."
+  default     = "athena-results"
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9!_.*'()=-]+(/[a-zA-Z0-9!_.*'()=-]+)*$", var.athena_results_prefix))
+    error_message = "athena_results_prefix must be a safe, relative S3 prefix."
+  }
+}
+
+variable "athena_bytes_scanned_cutoff" {
+  type        = number
+  description = "Maximum bytes Athena may scan per query; Athena requires at least 10 MiB."
+  default     = 104857600
+
+  validation {
+    condition     = var.athena_bytes_scanned_cutoff >= 10485760
+    error_message = "athena_bytes_scanned_cutoff must be at least 10485760 bytes (10 MiB)."
+  }
+}
+
 variable "glue_worker_type" {
   type        = string
   description = "Smallest approved Glue worker type for the bounded demo."
@@ -59,4 +81,40 @@ variable "glue_worker_count" {
     condition     = var.glue_worker_count >= 2 && var.glue_worker_count <= 10
     error_message = "glue_worker_count must be between 2 and 10."
   }
+}
+
+variable "glue_package_path" {
+  type        = string
+  description = "Deterministic zip produced by scripts/package_glue_jobs.py before deployment."
+  default     = "build/nyc_glue_jobs.zip"
+}
+
+variable "glue_package_s3_key" {
+  type        = string
+  description = "S3 key for the shared Glue Python package."
+  default     = "glue_jobs/nyc_glue_jobs.zip"
+}
+
+variable "airflow_runner_ami_id" {
+  type        = string
+  description = "Optional approved Linux AMI ID; empty keeps the temporary runner disabled."
+  default     = ""
+}
+
+variable "airflow_runner_subnet_id" {
+  type        = string
+  description = "Subnet for the optional temporary Airflow runner."
+  default     = ""
+}
+
+variable "airflow_runner_instance_type" {
+  type        = string
+  description = "Instance type for the optional temporary Airflow runner."
+  default     = "t3.small"
+}
+
+variable "airflow_runner_key_name" {
+  type        = string
+  description = "Optional pre-existing EC2 key name; leave empty for SSM-only access."
+  default     = ""
 }

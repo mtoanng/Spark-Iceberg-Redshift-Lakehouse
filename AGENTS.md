@@ -41,7 +41,7 @@ The priority order is:
 2. complete Milestone B for the junior Definition of Done;
 3. implement Milestone C only when explicitly requested.
 
-Do not begin schema evolution, snapshot pinning, compaction, full-year backfills, or advanced maintenance before the one-month Bronze -> Silver -> Gold -> DuckDB path works.
+Do not begin schema evolution, snapshot pinning, compaction, full-year backfills, or advanced maintenance before the one-month Bronze -> Silver -> Gold -> Athena path works.
 
 ## Working mode
 
@@ -100,14 +100,19 @@ Reason:
 ## Locked architecture
 
 ```text
-NYC TLC HVFHV monthly Parquet -> S3 -> Airflow 3 -> Glue/PySpark
--> Iceberg Bronze/Silver -> dbt Gold -> basic quality -> DuckDB read-only
+Official NYC TLC HVFHV Parquet + Taxi Zone lookup
+-> S3 Landing -> Airflow 3 -> Glue/PySpark Bronze
+-> Iceberg Bronze -> mandatory Great Expectations checkpoint
+-> Glue/PySpark Silver -> Iceberg Silver + quarantine
+-> dbt-glue Gold -> publication manifest -> Amazon Athena
 ```
 
 Rules:
 
 * Iceberg on S3 is canonical.
-* DuckDB is a read-only consumer, not a second warehouse.
+* AWS Glue Data Catalog is the canonical catalog.
+* Athena is the bounded analytical serving layer; it is read-only for this project.
+* Great Expectations is a blocking contract checkpoint between Bronze and Silver.
 * Airflow orchestrates; transformation logic belongs in PySpark, dbt, or focused utilities.
 * Junior Gold is limited to three dimensions, one fact, and two marts.
 * Do not add ML, recommendation, MongoDB, PostgreSQL serving, ClickHouse, ScyllaDB, Redis, Elasticsearch, Trino, Kubernetes, dashboards, or unrestricted SQL endpoints.
@@ -119,7 +124,7 @@ Rules:
 * Use deterministic fixtures for local tests.
 * Use a disposable remote machine for DAG/dbt and small Spark integration tests.
 * Use AWS trials/credits only after code, tests, Terraform validation, smoke scripts, and teardown instructions are ready.
-* Start with one month, then three months; full 2024 is optional.
+* Start with one month, then four consecutive months; full 2024 is optional.
 
 
 
@@ -132,7 +137,7 @@ For each phase:
 3. require the user to explain or manually verify that decision;
 4. end with three teach-back questions and one failure/rerun experiment.
 
-Core decisions include source grain, idempotency key, Bronze/Silver boundaries, quarantine, fact grain, Iceberg role, Airflow rerun semantics, and DuckDB's read-only role.
+Core decisions include source grain, idempotency key, Bronze/Silver boundaries, Great Expectations blocking behavior, quarantine, fact grain, Iceberg role, Airflow rerun semantics, publication manifests, and Athena's bounded serving role.
 
 Do not block all implementation waiting for the user; clearly mark the single student learning task for the phase.
 
@@ -161,7 +166,8 @@ Typical checks:
 * Airflow 3 DAG import test;
 * dbt parse/compile/build at the available level;
 * one quality checkpoint on fixtures;
-* DuckDB fixed-query tests;
+* Great Expectations checkpoint contract tests;
+* Athena SQL and Boto3 runner contract tests;
 * idempotent rerun test;
 * Terraform `fmt -check` and `validate`.
 

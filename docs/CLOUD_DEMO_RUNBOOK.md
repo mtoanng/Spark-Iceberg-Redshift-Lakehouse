@@ -12,8 +12,9 @@ without explicit approval and a budget limit.
 2. Measure SHA-256 and byte size for each selected monthly Parquet file and the
    Taxi Zone lookup. Record them in the evidence template.
 3. Review `terraform plan` and the expected resource list: one private S3
-   bucket, versioning/encryption/public-access block, one Glue Catalog database,
-   one Glue role/policy, and four Glue jobs.
+   bucket, versioning/encryption/public-access block, four Glue Catalog
+   namespaces, packaged Glue jobs, one Athena workgroup/policy, and the
+   optional IMDSv2 Airflow runner/profile.
 
 ## Provision and run
 
@@ -36,9 +37,12 @@ Then follow the Phase 5 order in the root README:
 3. run Silver validation/quarantine;
 4. run remote `dbt build` and tests;
 5. run the quality checkpoint;
-6. run the fixed DuckDB query pack;
-7. if the one-month evidence is clean, trigger the three sequential monthly
-   runs with Airflow.
+6. run the mandatory Great Expectations checkpoint before Silver and the
+   post-Gold reconciliation after dbt;
+7. publish the validated manifest and run the bounded Athena query pack;
+8. if the one-month evidence is clean, trigger the four sequential monthly
+   runs with Airflow or use `scripts/run_release.ps1` to generate the reviewed
+   command plan.
 
 Capture command output and service logs immediately. Replace no `NOT VERIFIED`
 marker with a claim unless the output is retained and independently reviewed.
@@ -53,8 +57,8 @@ Complete `docs/CLOUD_EVIDENCE_TEMPLATE.md` with:
 - Glue job run IDs and CloudWatch log references;
 - Bronze/Silver/quarantine/Gold counts and reconciliation results;
 - dbt build/test output;
-- DuckDB query outputs and the selected Gold table locations;
-- Airflow DAG run, retry/clear/rerun, and three-month sequence evidence;
+- Athena query IDs, outputs, scanned bytes, and selected Gold table locations;
+- Airflow DAG run, retry/clear/rerun, and four-month sequence evidence;
 - final S3/Glue cleanup state.
 
 ## Teardown

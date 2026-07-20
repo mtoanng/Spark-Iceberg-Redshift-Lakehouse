@@ -1,0 +1,7 @@
+# Runtime additions for the temporary Airflow runner. AWS credentials come
+# from the EC2 instance profile, never from this file or an environment file.
+apache-airflow-providers-amazon>=9.0,<10
+boto3>=1.34.0
+dbt-core>=1.7.0
+dbt-glue>=1.7.0
+great-expectations>=1.19.0,<2

@@ -39,18 +39,6 @@ venv.bak/
 # Jupyter
 .ipynb_checkpoints
 
-# Data files (large CSV files)
-data/
-*.csv
-*.parquet
-*.json
-!dbt_instacart/**/*.json
-!tests/
-!tests/fixtures/
-!tests/fixtures/**/*.json
-!tests/fixtures/**/*.csv
-!tests/fixtures/**/*.parquet
-
 # GCP Credentials
 credentials/
 *.json
@@ -60,6 +48,9 @@ credentials/
 service-account-*.json
 
 # Deterministic source-contract fixtures only; production data remains ignored.
+data/
+**/warehouse/data/
+*.duckdb
 !tests/
 !tests/fixtures/
 !tests/fixtures/**/*.json

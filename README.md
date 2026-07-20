@@ -5,22 +5,25 @@ For a file-by-file navigation map, see the [codebase index](docs/CODEBASE_INDEX.
 Milestone A implements the one-month code path:
 
 ```text
-NYC TLC HVFHV Parquet -> S3 -> AWS Glue/PySpark
--> Iceberg Bronze/Silver -> dbt Gold -> DuckDB fixed queries
+Official NYC TLC HVFHV Parquet + Taxi Zone lookup -> S3 Landing -> Airflow 3
+-> Glue/PySpark Bronze -> Iceberg Bronze -> Great Expectations checkpoint
+-> Glue/PySpark Silver + quarantine -> dbt-glue Gold
+-> publication manifest -> Amazon Athena
 ```
 
-Iceberg on S3 is the canonical store. DuckDB is a read-only analytical
-consumer: it reads the six published Gold tables through reviewed, named
-queries and does not accept arbitrary SQL.
+Iceberg on S3 and the AWS Glue Data Catalog are canonical. Great Expectations
+blocks the Bronze-to-Silver transition; Silver quarantine preserves invalid
+rows with reason codes. Athena is the bounded read-only analytical serving
+layer over validated Gold tables.
 
 ## Current evidence
 
 Credential-independent fixture tests cover the 2024 source contract, Bronze
 metadata, Silver validation/quarantine, deterministic `trip_id`, Gold graph,
-the explicit quality gate, Airflow DAG structure, three-month planning, and all
-five DuckDB queries. AWS execution, real Airflow scheduling, physical Iceberg
-snapshots, dbt build/test against Glue, and DuckDB reads from S3 are **NOT
-VERIFIED**.
+the explicit quality gate, Airflow DAG structure, and four-month planning.
+Athena contracts are tested locally; Great Expectations runtime, AWS execution, real Airflow
+scheduling, physical Iceberg snapshots, and dbt build/test against Glue are
+**NOT VERIFIED**.
 
 Milestone A deliberately targets one month first (`2024-01`). Four consecutive
 2024 Parquet files may remain in ignored `data/` for the later full junior
@@ -33,7 +36,7 @@ Use the repository virtual environment; do not start local Spark or Airflow.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\unit tests\contract -q
-.\.venv\Scripts\python.exe -m compileall -q consumer etl\sources etl\transforms tests
+.\.venv\Scripts\python.exe -m compileall -q athena etl tests
 
 $env:GLUE_ROLE_ARN='arn:aws:iam::000000000000:role/local-parse-only'
 $env:S3_GOLD_PATH='s3://local-parse-only/gold'
@@ -42,8 +45,8 @@ Push-Location etl\dbt_project
 Pop-Location
 ```
 
-The first command includes the end-to-end DuckDB smoke and expected-result
-checks. The parse target is syntax/graph validation only; do not compile it,
+The first command includes fixture and contract checks. The parse target is
+syntax/graph validation only; do not compile it,
 because that adapter starts a local Spark session.
 
 ## Exact Milestone A run order
@@ -76,14 +79,22 @@ These commands are an operator runbook, not evidence that AWS has been run.
    aws glue start-job-run --job-name <nyc-bronze-job> --arguments '{"--SOURCE_URI":"s3://<bucket>/landing/fhvhv_tripdata_2024-01.parquet","--SOURCE_YEAR":"2024","--SOURCE_MONTH":"1","--SOURCE_CHECKSUM":"<trip-sha256>","--INGESTION_RUN_ID":"<run-id>","--TAXI_ZONE_URI":"s3://<bucket>/reference/taxi_zone_lookup.csv","--TAXI_ZONE_CHECKSUM":"<zone-sha256>"}'
    ```
 
-4. After Bronze counts and metadata are checked, run
-   `etl/glue_jobs/nyc_silver_transform.py`.
+4. Run the mandatory Great Expectations checkpoint after Bronze and before
+   Silver. It blocks Silver when schema, timestamps, measures, or Taxi Zone
+   expectations fail; invalid source rows remain available for Silver
+   quarantine with reason codes.
+
+   ```powershell
+   airflow tasks test <nyc-great-expectations-task>
+   ```
+
+5. After the checkpoint passes, run the month-scoped Silver transformation.
 
    ```powershell
    aws glue start-job-run --job-name <nyc-silver-job>
    ```
 
-5. After Silver/quarantine reconciliation is checked, build and test the six
+6. After Silver/quarantine reconciliation is checked, build and test the six
    Gold models from a disposable remote environment with `dbt-glue` installed.
 
    ```powershell
@@ -92,31 +103,21 @@ These commands are an operator runbook, not evidence that AWS has been run.
    Pop-Location
    ```
 
-6. Run `etl/glue_jobs/nyc_quality_checkpoint.py` after dbt succeeds. It blocks
-   promotion if Bronze does not reconcile to Silver plus quarantine, Silver
-   `trip_id` is duplicated, quarantine lacks a reason, or Gold facts do not
-   reconcile to valid Silver rows.
-
-   ```powershell
-   aws glue start-job-run --job-name <nyc-quality-checkpoint-job> --arguments '{"--SOURCE_YEAR":"2024","--SOURCE_MONTH":"1"}'
-   ```
-
-7. After the quality gate passes, provide the six validated Gold Iceberg table S3
-   locations to `DuckDBGoldConsumer.from_iceberg_locations(...)` and run only
-   members of `QueryName`. The DuckDB host needs the Iceberg extension installed
-   and an AWS credential chain with read-only S3/catalog permissions.
+7. Publish the validated manifest, then run
+   the bounded Athena Gold smoke, business-mart, and history/snapshots queries.
 
 Do not advance to another month until the selected month reconciles from valid
-Silver rows through `fct_trips` and the five fixed queries return reviewed
-results.
+Silver rows through `fct_trips`, the publication manifest is valid, and the
+Athena smoke result is reviewed.
 
 ## Phase 5 manual orchestration
 
 `etl/dags/nyc_hvfhs_monthly_dag.py` defines the manually triggered Airflow 3
 DAG `nyc_hvfhs_monthly` with `year`, `month`, and `force` parameters. Its task
-order is `prepare_month -> bronze_ingestion -> silver_transform -> dbt_build ->
-quality_checkpoint`. `nyc_hvfhs_three_month_backfill` triggers three monthly
-runs in sequence, starting at a month no later than October.
+order is `prepare_month -> bronze_ingestion -> great_expectations ->
+silver_transform -> dbt_build -> publication_manifest -> athena_smoke`.
+`nyc_hvfhs_four_month_backfill` triggers four monthly
+runs in sequence, starting at a month no later than September.
 
 `force` is a same-source retry signal, not permission to replace a source with a
 different checksum. The deployed Airflow instance must hold the documented
@@ -126,13 +127,13 @@ backfill run has been executed yet.
 ## Gold and query contract
 
 Gold contains exactly `dim_date`, `dim_operator`, `dim_zone`, `fct_trips`,
-`mart_hourly_zone_demand`, and `mart_operator_metrics`. The fixed query pack is:
+`mart_hourly_zone_demand`, and `mart_operator_metrics`. The bounded Athena
+query pack is:
 
-1. hourly pickups by zone;
-2. operator trip count and average fare;
-3. top pickup zones for a selected month;
-4. fare and driver-pay reconciliation;
-5. `EXPLAIN ANALYZE` for a filtered fact query.
+1. Gold smoke reconciliation;
+2. representative hourly zone-demand business query;
+3. Iceberg history/snapshots metadata query;
+4. parameterized version-travel template (manual verification only).
 
 ## Terraform, CI, and advanced lifecycle
 
@@ -149,4 +150,4 @@ runs. No lifecycle operation deletes or rewrites canonical data locally.
 
 Start with [AGENTS.md](AGENTS.md), the
 [blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md), and the latest
-[phase report](docs/PHASE_7_REPORT.md).
+[closure reports](docs/CODEBASE_COMPLETION_REPORT.md).

@@ -4,8 +4,10 @@ This is the navigation map for the active NYC TLC High-Volume For-Hire Vehicle
 (HVFHV) lakehouse. The active architecture is:
 
 ```text
-monthly HVFHV Parquet -> S3 -> Airflow 3 -> Glue/PySpark
--> Iceberg Bronze/Silver -> dbt Gold -> quality gate -> DuckDB read-only
+official HVFHV Parquet + Taxi Zone lookup -> S3 Landing -> Airflow 3
+-> Glue/PySpark Bronze -> Iceberg Bronze -> Great Expectations checkpoint
+-> Glue/PySpark Silver + quarantine -> dbt-glue Gold
+-> publication manifest -> Amazon Athena
 ```
 
 AWS, Glue, Airflow service execution, dbt cloud builds, and Iceberg lifecycle
@@ -32,16 +34,18 @@ operations remain environment-dependent unless a phase report says otherwise.
 | --- | --- |
 | `etl/sources/nyc_hvfhs.py` | Official monthly filename/URI, required columns, deterministic `trip_id`, source manifest decisions, and stable run IDs. |
 | `etl/transforms/nyc_hvfhs.py` | Source-faithful Bronze metadata, Silver validation, quarantine reason codes, deduplication, and reconciliation. |
-| `etl/orchestration/nyc_hvfhs_runs.py` | Monthly request validation, immutable-source audit binding, and three-month sequential planning. |
-| `etl/quality/nyc_hvfhs_checkpoint.py` | Credential-free equivalent quality checkpoint for fixture batches. |
+| `etl/orchestration/nyc_hvfhs_runs.py` | Monthly request validation, immutable-source audit binding, and four-month sequential planning. |
+| `etl/quality/nyc_hvfhs_ge.py` | Fixture-tested Great Expectations suite definition for the mandatory pre-Silver gate. |
+| `etl/quality/nyc_hvfhs_checkpoint.py` | Credential-free post-Gold reconciliation contract; separate from Great Expectations. |
 
 ### Glue/PySpark entry points
 
 | Path | Responsibility | Runtime |
 | --- | --- | --- |
-| `etl/glue_jobs/initialize_nyc_iceberg_tables.py` | Create Bronze/Silver/quarantine Iceberg namespaces and tables. | AWS Glue only |
-| `etl/glue_jobs/nyc_bronze_ingestion.py` | Read one monthly Parquet and Taxi Zone lookup; append Bronze metadata. | AWS Glue only |
-| `etl/glue_jobs/nyc_silver_transform.py` | Validate, deduplicate, and write Silver/quarantine. | AWS Glue only |
+| `etl/glue_jobs/initialize_nyc_iceberg_tables.py` | Create Bronze/Silver/operations Iceberg namespaces and tables. | AWS Glue only |
+| `etl/glue_jobs/nyc_bronze_ingestion.py` | Read one month and replace its guarded Bronze partitions. | AWS Glue only |
+| `etl/glue_jobs/nyc_great_expectations_checkpoint.py` | Run the mandatory month-scoped GE gate and persist its result. | AWS Glue only |
+| `etl/glue_jobs/nyc_silver_transform.py` | Require `ge_passed`, validate, reconcile, and replace Silver/quarantine partitions. | AWS Glue only |
 | `etl/glue_jobs/nyc_quality_checkpoint.py` | Read-only Bronze/Silver/quarantine/Gold reconciliation gate. | AWS Glue only |
 | `etl/glue_jobs/nyc_schema_evolution_2025.py` | Apply the bounded 2025 congestion-fee DDL plan. | AWS Glue only; Phase 7 |
 
@@ -49,8 +53,8 @@ operations remain environment-dependent unless a phase report says otherwise.
 
 | Path | Responsibility |
 | --- | --- |
-| `etl/dags/nyc_hvfhs_monthly_dag.py` | Manual one-month DAG with `year`, `month`, and `force`; chains Bronze → Silver → dbt → quality. |
-| `etl/dags/nyc_hvfhs_monthly_dag.py` | Also defines the three-month sequential backfill DAG using ordered child triggers. |
+| `etl/dags/nyc_hvfhs_monthly_dag.py` | Manual one-month DAG contract; target order is Bronze → Great Expectations → Silver → dbt Gold → publication manifest → Athena smoke. |
+| `etl/dags/nyc_hvfhs_monthly_dag.py` | Also defines the four-month sequential backfill DAG using ordered child triggers. |
 | `etl/orchestration/nyc_hvfhs_runs.py` | Pure contracts used by the DAG; no scheduler or AWS calls. |
 
 ### Iceberg and lifecycle
@@ -76,12 +80,13 @@ Project root: `etl/dbt_project/`
 | `models_nyc/marts/` | Hourly zone demand and operator metrics marts. |
 | `tests/fct_trips_reconciles_to_silver.sql` | Silver-to-fact reconciliation assertion. |
 
-### DuckDB consumer
+### Athena serving
 
 | Path | Responsibility |
 | --- | --- |
-| `consumer/duckdb_consumer.py` | Read-only consumer boundary; accepts only `QueryName`, never arbitrary SQL. |
-| `consumer/queries/*.sql` | Five fixed queries: hourly demand, operator metrics, top zones, fare/pay reconciliation, and filtered `EXPLAIN ANALYZE`. |
+| `athena/query_runner.py` | Generic Boto3 runner using the AWS SDK credential chain and one workgroup. |
+| `athena/verify_gold.py` | Minimal Gold smoke verifier. |
+| `athena/sql/` | Four bounded SQL artifacts: Gold smoke, business mart, history/snapshots, and version-travel template. |
 
 ### Infrastructure and CI
 
@@ -102,22 +107,22 @@ Project root: `etl/dbt_project/`
 | Path | Coverage |
 | --- | --- |
 | `tests/fixtures/nyc_hvfhs/` | Small source-shaped 2024/2025 trip fixtures and Taxi Zone lookup. |
-| `tests/fixtures/gold_fixture.py` | Deterministic in-memory Gold tables for DuckDB tests. |
 | `tests/unit/test_nyc_hvfhs_source.py` | Source schema, checksum identity, URI, and manifest decisions. |
 | `tests/unit/test_nyc_hvfhs_transform.py` | Bronze/Silver/quarantine and rerun contracts. |
 | `tests/unit/test_iceberg_catalog.py` | Upstream Iceberg table specifications and DDL. |
 | `tests/unit/test_dbt_gold_contract.py` | Exactly six active Gold models and dbt graph contract. |
-| `tests/unit/test_duckdb_consumer.py` | Fixed query outputs and arbitrary-SQL rejection. |
-| `tests/unit/test_nyc_phase5_contracts.py` | Quality gate, Airflow request/audit, three-month planning, and force semantics. |
+| `tests/unit/test_athena_runner.py` | Mocked Boto3 runner behavior, pagination, token forwarding, failure, cancellation, and timeout. |
+| `tests/unit/test_athena_sql.py` | Exactly four read-only Athena SQL artifacts and safe parameter/template rules. |
+| `tests/unit/test_nyc_phase5_contracts.py` | Quality gate, Airflow request/audit, four-month planning, and force semantics. |
 | `tests/unit/test_nyc_airflow_dag.py` | DAG topology import using local Airflow interface stubs. |
 | `tests/unit/test_iceberg_lifecycle.py` | Phase 7 schema, snapshot, compaction, retention, and orphan contracts. |
-| `tests/contract/test_duckdb_smoke.py` | End-to-end fixed-query smoke and controlled rerun. |
+| `tests/contract/test_athena_smoke.py` | Mocked minimal Gold smoke-verifier contract. |
 
 Credential-independent local checks:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\unit tests\contract -q
-.\.venv\Scripts\python.exe -m compileall -q consumer etl tests
+.\.venv\Scripts\python.exe -m compileall -q athena etl tests
 Push-Location etl\dbt_project
 ..\..\.venv\Scripts\dbt.exe parse --profiles-dir . --target local_parse --no-partial-parse
 Pop-Location
@@ -130,7 +135,7 @@ terraform -chdir=terraform validate
 | Path | Purpose |
 | --- | --- |
 | `docs/PHASE_0_REPORT.md` through `docs/PHASE_5_REPORT.md` | Historical implementation reports. |
-| `docs/PHASE_6_7_REPORT.md` | Latest Terraform, CI, cloud-runbook, and lifecycle report. |
+| `docs/CODEBASE_COMPLETION_REPORT.md` | Latest closure-phase implementation report. |
 | `docs/CLOUD_DEMO_RUNBOOK.md` | Approved disposable-cloud procedure and teardown safety. |
 | `docs/CLOUD_EVIDENCE_TEMPLATE.md` | Blank evidence record; all fields begin `NOT VERIFIED`. |
 
