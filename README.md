@@ -1,12 +1,11 @@
 # NYC HVFHV Iceberg Lakehouse
+<img width="1231" height="627" alt="image" src="https://github.com/user-attachments/assets/b272c3c1-77b4-4ed0-baf1-cfb1f3dfa153" />
 
 An AWS lakehouse for the official NYC TLC High-Volume For-Hire Vehicle (HVFHV)
 trip dataset. The pipeline is month-scoped and uses Amazon S3, AWS Glue,
 Apache Iceberg, Great Expectations, dbt, Airflow 3, and Amazon Athena.
 
 > **End-to-end data lakehouse with ML-powered product recommendations**  
-
-<img width="1362" height="752" alt="image" src="https://github.com/user-attachments/assets/d3b03009-0079-451d-b564-0693aac7248f" />
 
 ---
 
