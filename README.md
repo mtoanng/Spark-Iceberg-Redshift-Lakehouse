@@ -4,7 +4,11 @@ An AWS lakehouse for the official NYC TLC High-Volume For-Hire Vehicle (HVFHV)
 trip dataset. The pipeline is month-scoped and uses Amazon S3, AWS Glue,
 Apache Iceberg, Great Expectations, dbt, Airflow 3, and Amazon Athena.
 
-The canonical path is:
+> **End-to-end data lakehouse with ML-powered product recommendations**  
+
+<img width="1362" height="752" alt="image" src="https://github.com/user-attachments/assets/d3b03009-0079-451d-b564-0693aac7248f" />
+
+---
 
 ```text
 NYC TLC Parquet + Taxi Zone lookup
