@@ -1,17 +1,17 @@
-name: 'instacart_lakehouse'
+name: 'nyc_hvfhs_lakehouse'
 version: '1.0.0'
 config-version: 2
 
-# Project profile (dbt-glue)
-profile: 'instacart_lakehouse'
+profile: 'nyc_hvfhs_lakehouse'
 
 # Directories
-model-paths: ["models"]
+model-paths: ["models_nyc"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
+packages-install-path: "target/dbt_packages_local"
 
 # Build artifacts
 target-path: "target"
@@ -20,60 +20,7 @@ clean-targets:
   - "dbt_packages"
   - "logs"
 
-# Model configurations (adapted for dbt-glue)
 models:
-  instacart_lakehouse:
-    # Staging layer - Read from Glue Catalog Silver, transform as views
-    staging:
-      +materialized: view
-      +schema: gold
-      +file_format: iceberg
-    
-    # Marts layer - Dimensional model in Glue Catalog Gold
-    marts:
-      # Dimensions - Materialize as Iceberg tables
-      dimensions:
-        +materialized: table
-        +schema: gold
-        +file_format: iceberg
-      
-      # Facts - Materialize as Iceberg tables
-      facts:
-        +materialized: table
-        +schema: gold
-        +file_format: iceberg
-      
-      # Analytics - Materialize as views
-      analytics:
-        +materialized: view
-        +schema: gold
-        +file_format: iceberg
-      
-      # ML features - NEW for Phase 6
-      ml:
-        +materialized: table
-        +schema: gold
-        +file_format: iceberg
-
-# Seeds configuration
-seeds:
-  instacart_lakehouse:
-    +schema: seeds
-
-# Snapshots configuration
-snapshots:
-  instacart_lakehouse:
-    +target_schema: snapshots
-
-# Documentation
-docs-paths: ["docs"]
-
-# Variables
-vars:
-  # Date range for incremental loads
-  start_date: '2017-01-01'
-  end_date: '2017-12-31'
-  
-  # Business rules
-  min_orders_for_power_user: 10
-  reorder_threshold_days: 30
+  nyc_hvfhs_lakehouse:
+    +materialized: table
+    +file_format: iceberg

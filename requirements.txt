@@ -2,6 +2,7 @@
 pyspark>=3.4.0
 pandas>=2.0.0
 numpy>=1.24.0
+great-expectations>=1.19.0,<2
 
 # Apache Iceberg
 pyiceberg>=0.5.0
@@ -14,30 +15,10 @@ botocore>=1.31.0
 dbt-core>=1.7.0
 dbt-glue>=1.7.0
 
-# Airflow
-apache-airflow>=2.7.0
-apache-airflow-providers-amazon>=8.13.0
+# Airflow 3 orchestration
+apache-airflow>=3.0,<4
+apache-airflow-providers-amazon>=9.0,<10
 apache-airflow-providers-apache-spark>=4.3.0
-
-# Data Quality
-great-expectations>=0.18.0
-
-# Kaggle API
-kaggle>=1.5.16
-
-# MongoDB (metadata catalog)
-pymongo>=4.5.0
-
-# DuckDB (query engine)
-duckdb>=0.10.0
-
-# FastAPI (warehouse service)
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
-
-# SQL validation (AST-based read-only enforcement)
-sqlglot>=23.0.0
 
 # HTTP client
 requests>=2.31.0

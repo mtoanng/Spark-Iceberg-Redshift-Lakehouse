@@ -1,0 +1,49 @@
+name: lakehouse-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-fixtures:
+    name: Python fixtures and contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install credential-independent test tools
+        run: python -m pip install --upgrade pytest boto3 great-expectations dbt-core dbt-spark
+      - name: Compile Python
+        run: python -m compileall -q athena etl tests
+      - name: Run unit and contract tests
+        run: python -m pytest -p no:cacheprovider tests/unit tests/contract -q
+      - name: Validate Glue package contract
+        run: python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+      - name: Validate shell syntax
+        run: bash -n scripts/bootstrap_airflow_runner.sh
+      - name: Parse dbt graph without credentials
+        working-directory: etl/dbt_project
+        env:
+          GLUE_ROLE_ARN: arn:aws:iam::000000000000:role/local-parse-only
+          S3_GOLD_PATH: s3://local-parse-only/gold
+        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target local_parse --no-partial-parse && dbt compile --profiles-dir . --target local_parse --no-partial-parse
+
+  terraform:
+    name: Terraform format and validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.8"
+      - name: Format check
+        run: terraform fmt -check -recursive terraform
+      - name: Validate without a backend
+        working-directory: terraform
+        run: terraform init -backend=false && terraform validate

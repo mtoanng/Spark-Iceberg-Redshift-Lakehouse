@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: dim_operator
+    description: One row per HVFHV operator code observed in valid Silver trips.
+    columns:
+      - name: operator_code
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_zone
+    description: One row per TLC Taxi Zone lookup identifier.
+    columns:
+      - name: zone_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_date
+    description: One row per pickup calendar date represented in valid Silver trips.
+    columns:
+      - name: date_key
+        data_tests:
+          - unique
+          - not_null
+      - name: calendar_date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_trips
+    description: One row per validated, deduplicated Silver trip.
+    columns:
+      - name: trip_id
+        data_tests:
+          - unique
+          - not_null
+      - name: operator_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_operator')
+                field: operator_code
+      - name: pickup_date_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: pickup_zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: dropoff_zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_zone')
+                field: zone_id
+      - name: passenger_fare
+        data_tests:
+          - not_null
+      - name: driver_pay
+        data_tests:
+          - not_null
+
+  - name: mart_hourly_zone_demand
+    description: One row per pickup date, hour, and pickup zone.
+    columns:
+      - name: hourly_zone_key
+        data_tests:
+          - unique
+          - not_null
+      - name: trip_count
+        data_tests:
+          - not_null
+
+  - name: mart_operator_metrics
+    description: One row per source year, source month, and operator.
+    columns:
+      - name: operator_month_key
+        data_tests:
+          - unique
+          - not_null
+      - name: trip_count
+        data_tests:
+          - not_null

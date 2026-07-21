@@ -4,6 +4,7 @@
 terraform.tfstate
 terraform.tfstate.backup
 *.tfvars
+*.tfplan
 !terraform.tfvars.example
 .terraformrc
 terraform.rc
