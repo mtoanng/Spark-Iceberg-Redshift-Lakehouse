@@ -1,1 +1,0 @@
-"""Warehouse test package."""
