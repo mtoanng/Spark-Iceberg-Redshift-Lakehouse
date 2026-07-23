@@ -1,4 +1,5 @@
 # NYC HVFHV Iceberg Lakehouse
+<img width="1270" height="646" alt="image" src="https://github.com/user-attachments/assets/aaaaa561-86b8-4a59-9bdd-bd36fa6d94e8" />
 
 A bounded monthly lakehouse for the official NYC TLC High-Volume For-Hire
 Vehicle (HVFHV) trip records. The repository is designed for a Junior Data
