@@ -41,6 +41,10 @@ def test_fact_and_mart_grains_are_declared() -> None:
     assert "source year, source month, and operator" in operator_sql
     assert "ref('fct_trips')" in hourly_sql
     assert "ref('fct_trips')" in operator_sql
+    assert "materialized='incremental'" in fact_sql
+    assert "incremental_strategy='merge'" in fact_sql
+    assert "unique_key=['trip_id']" in fact_sql
+    assert "var('source_year')" in fact_sql and "var('source_month')" in fact_sql
 
 
 def test_schema_declares_tests_for_exactly_six_models() -> None:
@@ -58,3 +62,21 @@ def test_fact_to_silver_reconciliation_test_exists() -> None:
     assert "source('silver', 'silver_trips')" in test_sql
     assert "ref('fct_trips')" in test_sql
     assert "<>" in test_sql
+
+
+def test_glue_profile_uses_adapter_compatible_iceberg_conf_string() -> None:
+    profile = (
+        PROJECT_ROOT / "etl" / "dbt_project" / "profiles.yml"
+    ).read_text(encoding="utf-8")
+    assert "custom_iceberg_catalog_namespace: glue_catalog" in profile
+    assert "conf: >-" in profile
+    assert (
+        "spark.sql.catalog.glue_catalog.warehouse={{ env_var('S3_GOLD_PATH') }}"
+        in profile
+    )
+
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "arn:aws:iam::000000000000:role/ci-not-used" in workflow
+    assert "s3://ci-not-used/warehouse/gold" in workflow

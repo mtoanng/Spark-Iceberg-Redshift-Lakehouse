@@ -10,6 +10,8 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from pyspark.sql.functions import col
 
+from etl.sources.nyc_hvfhs import BASE_REQUIRED_TRIP_COLUMNS
+
 
 args = getResolvedOptions(
     sys.argv, ["JOB_NAME", "SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"]
@@ -26,27 +28,15 @@ def _table(namespace: str, name: str) -> str:
 
 
 BRONZE_TRIPS_TABLE = _table("bronze", "bronze_hvfhs_trips")
-BRONZE_ZONES_TABLE = _table("bronze", "bronze_taxi_zones")
 MANIFEST_TABLE = _table("ops", "source_run_manifest")
 
 
 def _suite() -> gx.ExpectationSuite:
-    required = (
-        "hvfhs_license_num",
-        "request_datetime",
-        "pickup_datetime",
-        "dropoff_datetime",
-        "PULocationID",
-        "DOLocationID",
-        "trip_miles",
-        "trip_time",
-        "base_passenger_fare",
-        "driver_pay",
-    )
     return gx.ExpectationSuite(
         name="nyc_hvfhs_bronze_pre_silver",
         expectations=[
-            gx.expectations.ExpectColumnToExist(column=name) for name in required
+            gx.expectations.ExpectColumnToExist(column=name)
+            for name in sorted(BASE_REQUIRED_TRIP_COLUMNS)
         ],
     )
 
@@ -73,6 +63,14 @@ def main() -> None:
         int(args["SOURCE_MONTH"]),
         args["INGESTION_RUN_ID"],
     )
+    escaped_run_id = run_id.replace("'", "''")
+    manifest = spark.sql(
+        f"SELECT run_status FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{escaped_run_id}' ORDER BY updated_at DESC LIMIT 1"
+    ).first()
+    if not manifest or manifest.run_status != "bronze_published":
+        raise ValueError(
+            "Great Expectations requires the requested Bronze run to be published."
+        )
     bronze = spark.table(BRONZE_TRIPS_TABLE).filter(
         (col("_source_year") == year)
         & (col("_source_month") == month)
@@ -86,44 +84,13 @@ def main() -> None:
         batch_parameters={"dataframe": bronze}
     )
     validation = batch.validate(expectation_suite=_suite())
-    blocking_success = validation.success and bronze.limit(1).count() == 1
-    # Row-level observations deliberately remain Silver's quarantine contract.
-    zones = (
-        spark.table(BRONZE_ZONES_TABLE)
-        .filter((col("_source_year") == year) & (col("_source_month") == month))
-        .select(col("LocationID").cast("int").alias("zone_id"))
-        .distinct()
-    )
-    observed_invalid = (
-        bronze.join(
-            zones.withColumnRenamed("zone_id", "pickup_zone_id"),
-            col("PULocationID") == col("pickup_zone_id"),
-            "left",
-        )
-        .join(
-            zones.withColumnRenamed("zone_id", "dropoff_zone_id"),
-            col("DOLocationID") == col("dropoff_zone_id"),
-            "left",
-        )
-        .filter(
-            col("pickup_datetime").isNull()
-            | col("dropoff_datetime").isNull()
-            | (col("dropoff_datetime") < col("pickup_datetime"))
-            | col("pickup_zone_id").isNull()
-            | col("dropoff_zone_id").isNull()
-            | (col("trip_miles") < 0)
-            | (col("trip_time") < 0)
-            | (col("base_passenger_fare") < 0)
-            | (col("driver_pay") < 0)
-        )
-        .count()
-    )
+    blocking_success = bool(validation.success) and bronze.limit(1).count() == 1
     summary = json.dumps(
         {
             "suite": "nyc_hvfhs_bronze_pre_silver",
-            "gx_success": validation.success,
+            "gx_success": bool(validation.success),
             "blocking_success": blocking_success,
-            "observed_invalid_row_count": observed_invalid,
+            "scope": "required_columns_and_non_empty_month",
         },
         sort_keys=True,
     )

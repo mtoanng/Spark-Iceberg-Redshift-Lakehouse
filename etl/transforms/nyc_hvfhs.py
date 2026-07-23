@@ -116,10 +116,13 @@ def _as_float(value: object) -> float | None:
 
 
 def _reason_code(row: Mapping[str, object], zone_ids: set[int]) -> str | None:
+    requested = _as_datetime(row.get("request_datetime"))
     pickup = _as_datetime(row.get("pickup_datetime"))
     dropoff = _as_datetime(row.get("dropoff_datetime"))
-    if pickup is None or dropoff is None:
+    if requested is None or pickup is None or dropoff is None:
         return "MISSING_OR_INVALID_TIMESTAMP"
+    if pickup < requested:
+        return "PICKUP_BEFORE_REQUEST"
     if dropoff < pickup:
         return "DROPOFF_BEFORE_PICKUP"
     try:
@@ -135,6 +138,9 @@ def _reason_code(row: Mapping[str, object], zone_ids: set[int]) -> str | None:
         ("trip_miles", "NEGATIVE_TRIP_MILES"),
         ("trip_time", "NEGATIVE_TRIP_TIME"),
         ("base_passenger_fare", "NEGATIVE_PASSENGER_FARE"),
+        ("tolls", "NEGATIVE_TOLLS"),
+        ("sales_tax", "NEGATIVE_SALES_TAX"),
+        ("tips", "NEGATIVE_TIPS"),
         ("driver_pay", "NEGATIVE_DRIVER_PAY"),
     ):
         metric = _as_float(row.get(column))
@@ -191,9 +197,9 @@ def transform_silver(
                 "trip_miles": float(row["trip_miles"]),
                 "trip_time_seconds": int(float(row["trip_time"])),
                 "passenger_fare": float(row["base_passenger_fare"]),
-                "tolls": float(row.get("tolls") or 0),
-                "sales_tax": float(row.get("sales_tax") or 0),
-                "tips": float(row.get("tips") or 0),
+                "tolls": float(row["tolls"]),
+                "sales_tax": float(row["sales_tax"]),
+                "tips": float(row["tips"]),
                 "driver_pay": float(row["driver_pay"]),
                 "shared_request_flag": row["shared_request_flag"],
                 "shared_match_flag": row["shared_match_flag"],

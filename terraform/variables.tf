@@ -85,7 +85,7 @@ variable "glue_worker_count" {
 
 variable "glue_package_path" {
   type        = string
-  description = "Deterministic zip produced by scripts/package_glue_jobs.py before deployment."
+  description = "Repository-root-relative deterministic zip produced before deployment."
   default     = "build/nyc_glue_jobs.zip"
 }
 
@@ -110,7 +110,7 @@ variable "airflow_runner_subnet_id" {
 variable "airflow_runner_instance_type" {
   type        = string
   description = "Instance type for the optional temporary Airflow runner."
-  default     = "t3.small"
+  default     = "t3.medium"
 }
 
 variable "airflow_runner_key_name" {

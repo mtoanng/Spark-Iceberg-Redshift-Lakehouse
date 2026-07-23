@@ -10,6 +10,7 @@ from .nyc_hvfhs import (
     monthly_trip_uri,
     required_trip_columns,
     stable_run_id,
+    validate_landed_source,
     validate_trip_schema,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "monthly_trip_uri",
     "required_trip_columns",
     "stable_run_id",
+    "validate_landed_source",
     "validate_trip_schema",
 ]

@@ -1,32 +1,27 @@
-# Closure Phase C cleanup report
-
-Date: 2026-07-21
+# Cleanup report
 
 ## Removed
 
-- Tracked `terraform/tfplan`, the obsolete saved Instacart/ML plan artifact.
+- Tracked partial `.venv` files and generated Terraform plan material.
+- Active 2025 schema-evolution Glue job and advanced Iceberg lifecycle module.
+- Obsolete local publication writer replaced by the manifest Glue job.
+- Stale active documentation describing legacy datasets, recommendation/ML
+  work, removed lifecycle code, and old dbt targets.
+
+## Archived
+
+- Nothing newly archived. Historical phase reports remain clearly historical.
 
 ## Kept
 
-- Ignored Terraform state, backup state, private tfvars, provider cache, and
-  all credentials. These require operator/state review and remain protected by
-  ignore rules.
-- Valid NYC Terraform, S3 baseline, Glue jobs, Athena resources, Airflow image,
-  source fixtures, and historical phase reports.
-- Legacy directories and unrelated old scripts; no additional deletion was
-  authorized in this phase.
-
-## Added or replaced
-
-- Four logical Glue Catalog namespaces and deterministic shared Glue package
-  contract.
-- Optional instance-profile Airflow runner with IMDSv2 enforcement.
-- Airflow image/environment contract, publication and Athena hooks.
-- Smoke, four-month release, reconciliation, package, and guarded teardown
-  scripts.
+- Official NYC TLC source-shaped fixtures, including a small 2025 schema
+  fixture used only for contract readability.
+- Exactly six Gold models, four bounded Athena query artifacts, and protected
+  canonical S3/Glue resources.
+- Historical reports needed to explain prior verification work.
 
 ## Reason
 
-The active Terraform source now describes only NYC TLC, Glue/Iceberg, Airflow,
-Athena, and protected S3 resources. Obsolete tracked plan material was removed
-only after the replacement code and static checks were present.
+The active repository now describes only the bounded NYC HVFHV lifecycle. The
+first AWS deployment does not need automated schema evolution, maintenance,
+alternate serving engines, or legacy dataset code.

@@ -60,12 +60,12 @@ output "glue_role_arn" {
 
 output "glue_job_names" {
   value = {
-    initialize            = aws_glue_job.initialize.name
-    bronze                = aws_glue_job.bronze.name
-    silver                = aws_glue_job.silver.name
-    quality               = aws_glue_job.quality.name
-    great_expectations    = aws_glue_job.great_expectations.name
-    schema_evolution_2025 = aws_glue_job.schema_evolution.name
+    initialize         = aws_glue_job.initialize.name
+    bronze             = aws_glue_job.bronze.name
+    silver             = aws_glue_job.silver.name
+    reconciliation     = aws_glue_job.quality.name
+    great_expectations = aws_glue_job.great_expectations.name
+    publication        = aws_glue_job.publication.name
   }
   description = "Glue jobs consumed by the Phase 5 Airflow DAG."
 }
@@ -73,4 +73,9 @@ output "glue_job_names" {
 output "airflow_runner_instance_profile" {
   value       = var.airflow_runner_ami_id == "" ? null : aws_iam_instance_profile.airflow_runner[0].name
   description = "Instance profile used by the optional temporary Airflow runner."
+}
+
+output "publication_prefix_uri" {
+  value       = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
+  description = "Month-partitioned publication-manifest prefix."
 }

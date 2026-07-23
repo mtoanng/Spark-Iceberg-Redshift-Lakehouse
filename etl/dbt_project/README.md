@@ -1,24 +1,28 @@
-# NYC HVFHV Gold — dbt
+# NYC HVFHV Gold dbt project
 
-This dbt project reads the validated Iceberg Silver trip table and the
-source-faithful Bronze Taxi Zone lookup from AWS Glue Catalog. It materializes
-exactly six Iceberg Gold tables:
+This project materializes exactly six Iceberg Gold tables from validated
+Silver trips and Bronze Taxi Zones: `dim_date`, `dim_operator`, `dim_zone`,
+`fct_trips`, `mart_hourly_zone_demand`, and `mart_operator_metrics`.
 
-- `dim_operator`: one row per operator code;
-- `dim_zone`: one row per Taxi Zone ID;
-- `dim_date`: one row per pickup calendar date;
-- `fct_trips`: one row per valid, deduplicated `trip_id`;
-- `mart_hourly_zone_demand`: one row per pickup date/hour/zone;
-- `mart_operator_metrics`: one row per source year/month/operator.
+`fct_trips` uses a month-filtered Iceberg incremental merge keyed by
+`trip_id`. The small dimensions and marts use bounded table rebuilds, which is
+deliberately simpler for the four-month portfolio scope.
 
-The production target is `glue`. The `local_parse` target is only for
-credential-independent `dbt parse`; it must not compile, run, or publish
-canonical data because dbt-spark's session adapter starts local Spark.
+CI uses the credential-independent `ci` target and a deliberately closed
+Thrift endpoint. Parsing and compilation must not contact AWS or start local
+Spark:
 
 ```powershell
-dbt parse --profiles-dir . --target local_parse --no-partial-parse
+dbt deps --profiles-dir . --target ci
+dbt parse --profiles-dir . --target ci --no-partial-parse --no-introspect
+dbt compile --profiles-dir . --target ci --no-partial-parse --no-introspect
 ```
 
-Cloud execution requires `GLUE_ROLE_ARN` and `S3_GOLD_PATH`, the dbt-glue
-adapter, provisioned Iceberg source tables, and approved AWS access. It remains
-unverified until a bounded remote run is captured.
+An approved cloud build uses target `glue`, `GLUE_ROLE_ARN`, `S3_GOLD_PATH`,
+and explicit month variables:
+
+```powershell
+dbt build --profiles-dir . --target glue --vars '{source_year: 2024, source_month: 1}'
+```
+
+AWS/dbt-glue execution is **requires AWS execution verification**.

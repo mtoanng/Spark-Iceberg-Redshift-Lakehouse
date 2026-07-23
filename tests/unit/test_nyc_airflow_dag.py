@@ -14,6 +14,11 @@ DAG_PATH = Path(__file__).parents[2] / "etl" / "dags" / "nyc_hvfhs_monthly_dag.p
 def _fake_airflow_modules(monkeypatch):
     current_dag: list[FakeDAG] = []
 
+    def fake_package(name: str):
+        package = types.ModuleType(name)
+        package.__path__ = []
+        return package
+
     class FakeParam:
         def __init__(self, default, **kwargs):
             self.default = default
@@ -50,12 +55,27 @@ def _fake_airflow_modules(monkeypatch):
             raise AssertionError("DAG import must not resolve Airflow Variables")
 
     modules = {
-        "airflow": types.SimpleNamespace(DAG=FakeDAG),
-        "airflow.models": types.SimpleNamespace(Variable=FakeVariable),
-        "airflow.models.param": types.SimpleNamespace(Param=FakeParam),
-        "airflow.operators.bash": types.SimpleNamespace(BashOperator=FakeOperator),
-        "airflow.operators.python": types.SimpleNamespace(PythonOperator=FakeOperator),
-        "airflow.operators.trigger_dagrun": types.SimpleNamespace(
+        "airflow": fake_package("airflow"),
+        "airflow.providers": fake_package("airflow.providers"),
+        "airflow.providers.standard": fake_package("airflow.providers.standard"),
+        "airflow.providers.standard.operators": fake_package(
+            "airflow.providers.standard.operators"
+        ),
+        "airflow.providers.amazon": fake_package("airflow.providers.amazon"),
+        "airflow.providers.amazon.aws": fake_package("airflow.providers.amazon.aws"),
+        "airflow.providers.amazon.aws.operators": fake_package(
+            "airflow.providers.amazon.aws.operators"
+        ),
+        "airflow.sdk": types.SimpleNamespace(
+            DAG=FakeDAG, Param=FakeParam, Variable=FakeVariable
+        ),
+        "airflow.providers.standard.operators.bash": types.SimpleNamespace(
+            BashOperator=FakeOperator
+        ),
+        "airflow.providers.standard.operators.python": types.SimpleNamespace(
+            PythonOperator=FakeOperator
+        ),
+        "airflow.providers.standard.operators.trigger_dagrun": types.SimpleNamespace(
             TriggerDagRunOperator=FakeOperator
         ),
         "airflow.providers.amazon.aws.operators.glue": types.SimpleNamespace(
@@ -81,7 +101,7 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
         "great_expectations_checkpoint",
         "silver_transform",
         "dbt_build",
-        "quality_checkpoint",
+        "reconciliation",
         "publication_manifest",
         "athena_smoke",
     ]
@@ -90,18 +110,29 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert monthly.params["force"].default is False
     assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion"}
     assert monthly.tasks[1].downstream_task_ids == {"great_expectations_checkpoint"}
+    assert all(
+        monthly.tasks[index].kwargs["aws_conn_id"] is None
+        for index in (1, 2, 3, 5, 6)
+    )
     assert monthly.tasks[2].downstream_task_ids == {"silver_transform"}
-    assert monthly.tasks[4].downstream_task_ids == {"quality_checkpoint"}
+    assert monthly.tasks[4].downstream_task_ids == {"reconciliation"}
     assert monthly.tasks[5].downstream_task_ids == {"publication_manifest"}
     assert monthly.tasks[6].downstream_task_ids == {"athena_smoke"}
+    assert "source_year" in monthly.tasks[4].kwargs["bash_command"]
+    assert "source_month" in monthly.tasks[4].kwargs["bash_command"]
+    assert "--max-scanned-bytes" in monthly.tasks[7].kwargs["bash_command"]
+    assert "AWS_REGION" in monthly.tasks[7].kwargs["env"]
 
     backfill = module.nyc_hvfhs_four_month_backfill_dag
     assert [task.task_id for task in backfill.tasks] == [
+        "prepare_backfill",
         "trigger_month_1",
         "trigger_month_2",
         "trigger_month_3",
         "trigger_month_4",
     ]
-    assert backfill.tasks[0].downstream_task_ids == {"trigger_month_2"}
-    assert backfill.tasks[1].downstream_task_ids == {"trigger_month_3"}
-    assert backfill.tasks[2].downstream_task_ids == {"trigger_month_4"}
+    assert backfill.params["month"].kwargs["maximum"] == 12
+    assert backfill.tasks[0].downstream_task_ids == {"trigger_month_1"}
+    assert backfill.tasks[1].downstream_task_ids == {"trigger_month_2"}
+    assert backfill.tasks[2].downstream_task_ids == {"trigger_month_3"}
+    assert backfill.tasks[3].downstream_task_ids == {"trigger_month_4"}

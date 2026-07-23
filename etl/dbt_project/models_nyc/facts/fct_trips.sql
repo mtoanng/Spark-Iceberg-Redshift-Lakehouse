@@ -1,4 +1,11 @@
-{{ config(materialized='table', file_format='iceberg') }}
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key=['trip_id'],
+    file_format='iceberg',
+    partition_by=['source_year', 'source_month'],
+    iceberg_expire_snapshots='False'
+) }}
 
 -- Grain: exactly one row per validated, deduplicated Silver trip_id.
 select
@@ -25,3 +32,5 @@ select
     source_month,
     ingestion_run_id
 from {{ source('silver', 'silver_trips') }}
+where source_year = {{ var('source_year') | int }}
+  and source_month = {{ var('source_month') | int }}

@@ -1,81 +1,48 @@
 # Implementation status
 
-Last updated: 2026-07-21
+## Implemented and locally verified
 
-## Closure Phase A — source to Silver boundary
+- official monthly filename/URI and landed-S3 identity contracts;
+- SHA-256, byte size, year/month, stable run ID, and changed-source rejection;
+- source-faithful Bronze metadata and retry-safe monthly partition replacement;
+- structural Great Expectations suite construction and blocking state;
+- deterministic Silver validation, duplicate handling, reason codes, and
+  Bronze = Silver + quarantine reconciliation;
+- manifest lifecycle through Bronze, GE, Silver, Gold reconciliation, and
+  publication;
+- exact six-model dbt graph and month-scoped incremental fact configuration;
+- monthly/four-month Airflow topology and parameter contracts;
+- Athena runner, catalog/table/column verification, non-empty fact smoke,
+  bound parameters, and scan bound;
+- deterministic Glue package and repository hygiene checks.
 
-Status: **CODE IMPLEMENTED; AWS EXECUTION NOT VERIFIED**.
+## Implemented and statically verified
 
-Phase A completes the credential-independent code contracts for the monthly
-source boundary through Silver publication. The serving-layer replacement was
-intentionally deferred to Closure Phase B.
+- private/versioned/encrypted S3 bucket with public access blocked;
+- Glue Catalog namespaces, Glue jobs, Iceberg v2/Snappy DDL, and shared package;
+- least-scoped Airflow/dbt/Athena permissions for the bounded workflow;
+- Athena workgroup output encryption and bytes-scanned cutoff;
+- optional IMDSv2/SSM Airflow runner;
+- guarded source upload, deployment, evidence, and retained-data teardown paths;
+- credential-independent GitHub Actions workflow.
 
-Implemented:
+## Requires AWS execution verification
 
-- `ops.source_run_manifest` Iceberg DDL and a pure manifest state machine with
-  immutable source URI/checksum/size, month, run ID, status/timestamps, Bronze,
-  Silver and quarantine counts, GE result metadata, and failure details.
-- Month-scoped Bronze replacement writes and a checksum/URI guard. A completed
-  source is skipped unless an identical source is explicitly forced.
-- Mandatory Great Expectations task between Bronze and Silver in the monthly
-  Airflow topology. Structural/checkpoint failure persists `ge_blocked` and
-  prevents canonical Silver publication.
-- Silver is scoped to a year/month/run, checks for `ge_passed`, reconciles
-  counts before writing, replaces the month partitions, and retains invalid
-  records in reason-coded quarantine.
-- Catalog/database arguments use a shared `CATALOG_NAME` plus logical
-  `BRONZE_DATABASE`, `SILVER_DATABASE`, and `OPS_DATABASE` wiring with safe
-  Glue-Catalog defaults.
+- Terraform plan/apply against the selected account;
+- S3 upload identity and object metadata;
+- Glue/Iceberg physical reads, writes, partition replacement, and retries;
+- Great Expectations running inside Glue;
+- dbt-glue Iceberg merge behavior and all dbt tests;
+- Airflow instance-profile authentication and task failure propagation;
+- publication snapshot metadata availability;
+- Athena results, bytes scanned, and result locations;
+- controlled retry/clear/rerun, four-month sequence, cost, and teardown.
 
-Great Expectations does not replace quarantine. Required schema and non-empty
-batch conditions are promotion-blocking. Timestamp/order, non-negative metric,
-and zone-resolution observations are persisted in the run manifest and then
-handled by the same deterministic Silver reason-code logic, preserving every
-invalid Bronze row as quarantine evidence.
+## Not implemented
 
-## Verification status
+- 2025 schema evolution;
+- automated snapshot expiration, orphan deletion, or compaction;
+- full-year backfill, dashboards, ML, recommendations, or alternate engines.
 
-Credential-independent checks passed: formatting, undefined-name lint,
-compile, the 53-test Python unit/contract suite, installed Great Expectations
-suite construction, static manifest/idempotency checks, stubbed Airflow DAG
-topology, and a five-row constrained local PySpark fixture.
-
-NOT VERIFIED: AWS credentials; S3, Glue Catalog, actual Iceberg table writes;
-Glue job registration/execution; Great Expectations on Glue; Airflow service;
-physical Iceberg retry behavior; dbt-glue; Terraform plan/apply/destroy; and
-Athena. The local PySpark invocation required explicit `PYSPARK_PYTHON` because
-the Windows environment does not provide `python3`.
-
-## Closure Phase B â€” Athena serving replacement
-
-Status: **CODE IMPLEMENTED; AWS EXECUTION NOT VERIFIED**.
-
-The active analytical boundary is one Athena workgroup, four read-only SQL
-artifacts, one Boto3 runner, and one Gold smoke verifier. Results use a prefix
-of the existing project bucket with SSE-S3, CloudWatch query metrics, and a
-configurable scan cutoff. One policy grants only Gold object/Glue metadata
-reads, one-workgroup query actions, and result-prefix access.
-
-No Lake Formation, customer-managed KMS, separate results bucket, role
-hierarchy, dashboard, alarm, evidence exporter, generic query framework, or
-large query catalog was added. AWS queries, Terraform apply, and physical
-results remain NOT VERIFIED.
-
-## Closure Phase C — deployment closure
-
-Status: **STATIC CODE IMPLEMENTED; AWS EXECUTION NOT VERIFIED**.
-
-Terraform now models only the NYC TLC architecture: protected S3, bronze,
-silver, ops, and gold Glue namespaces, packaged Glue jobs, the bounded Athena
-workgroup/policy, and an optional IMDSv2-enforced Airflow runner using an EC2
-instance profile. The tracked obsolete Terraform plan was removed; ignored
-state, private variables, credentials, and generated plans remain ignored.
-
-Glue packaging is deterministic and records entrypoints, runtime dependencies,
-artifact S3 key, catalog, and namespace wiring. Airflow deployment includes
-the project import path, environment contract, year/month/force parameters,
-Bronze → GE → Silver → dbt → reconciliation → publication → optional Athena
-smoke ordering. Smoke/release/E2E, reconciliation, package, and guarded
-teardown scripts are present and unexecuted against AWS.
-
-The confirmed junior release profile is four sequential months.
+The codebase is ready for one controlled deployment review. It is not
+production-ready and has not been deployed as verified evidence.

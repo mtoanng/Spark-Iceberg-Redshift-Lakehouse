@@ -7,14 +7,17 @@ from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from pyspark.sql import Window
+from pyspark.storagelevel import StorageLevel
 from pyspark.sql.functions import (
     col,
     concat_ws,
     coalesce,
+    count,
     hour,
     lit,
     row_number,
     sha2,
+    sum as spark_sum,
     to_date,
     when,
 )
@@ -77,9 +80,14 @@ def main() -> None:
         args["INGESTION_RUN_ID"],
     )
     status = spark.sql(
-        f"SELECT run_status FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
+        f"SELECT run_status, validation_status, failure_stage FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
     ).collect()
-    if not status or status[0].run_status != "ge_passed":
+    retrying_silver = bool(status) and (
+        status[0].run_status == "failed"
+        and status[0].failure_stage == "silver"
+        and status[0].validation_status == "passed"
+    )
+    if not status or (status[0].run_status != "ge_passed" and not retrying_silver):
         raise ValueError(
             "Silver publication is blocked until the Great Expectations gate passes for this run."
         )
@@ -122,8 +130,14 @@ def main() -> None:
         reasoned = joined.withColumn(
             "reason_code",
             when(
-                col("pickup_datetime").isNull() | col("dropoff_datetime").isNull(),
+                col("request_datetime").isNull()
+                | col("pickup_datetime").isNull()
+                | col("dropoff_datetime").isNull(),
                 "MISSING_OR_INVALID_TIMESTAMP",
+            )
+            .when(
+                col("pickup_datetime") < col("request_datetime"),
+                "PICKUP_BEFORE_REQUEST",
             )
             .when(
                 col("dropoff_datetime") < col("pickup_datetime"),
@@ -131,9 +145,22 @@ def main() -> None:
             )
             .when(col("pickup_zone_id").isNull(), "UNKNOWN_PICKUP_ZONE")
             .when(col("dropoff_zone_id").isNull(), "UNKNOWN_DROPOFF_ZONE")
+            .when(
+                col("trip_miles").isNull()
+                | col("trip_time").isNull()
+                | col("base_passenger_fare").isNull()
+                | col("tolls").isNull()
+                | col("sales_tax").isNull()
+                | col("tips").isNull()
+                | col("driver_pay").isNull(),
+                "MISSING_OR_INVALID_NUMERIC",
+            )
             .when(col("trip_miles") < 0, "NEGATIVE_TRIP_MILES")
             .when(col("trip_time") < 0, "NEGATIVE_TRIP_TIME")
             .when(col("base_passenger_fare") < 0, "NEGATIVE_PASSENGER_FARE")
+            .when(col("tolls") < 0, "NEGATIVE_TOLLS")
+            .when(col("sales_tax") < 0, "NEGATIVE_SALES_TAX")
+            .when(col("tips") < 0, "NEGATIVE_TIPS")
             .when(col("driver_pay") < 0, "NEGATIVE_DRIVER_PAY"),
         )
         numbered = reasoned.withColumn(
@@ -153,6 +180,7 @@ def main() -> None:
                 "DUPLICATE_TRIP_ID",
             ).otherwise(col("reason_code")),
         )
+        classified.persist(StorageLevel.MEMORY_AND_DISK)
         quarantine = classified.filter(col("reason_code").isNotNull()).drop(
             "_trip_row_number", "_already_published"
         )
@@ -186,8 +214,16 @@ def main() -> None:
             to_date("pickup_datetime").alias("pickup_date"),
             hour("pickup_datetime").alias("pickup_hour"),
         )
-        silver_count, quarantine_count = silver.count(), quarantine.count()
-        if trips.count() != silver_count + quarantine_count:
+        counts = classified.agg(
+            count(lit(1)).alias("bronze_count"),
+            spark_sum(when(col("reason_code").isNull(), 1).otherwise(0)).alias(
+                "silver_count"
+            ),
+        ).first()
+        bronze_count = int(counts.bronze_count)
+        silver_count = int(counts.silver_count or 0)
+        quarantine_count = bronze_count - silver_count
+        if bronze_count != silver_count + quarantine_count:
             raise ValueError(
                 "Bronze/Silver/quarantine reconciliation failed before canonical publication."
             )
@@ -196,8 +232,11 @@ def main() -> None:
         spark.sql(
             f"UPDATE {MANIFEST_TABLE} SET run_status='silver_published', silver_row_count={silver_count}, quarantine_row_count={quarantine_count}, completed_at=current_timestamp(), updated_at=current_timestamp(), failure_stage=NULL, failure_message=NULL WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
         )
+        classified.unpersist()
         job.commit()
     except Exception as error:
+        if "classified" in locals():
+            classified.unpersist()
         spark.sql(
             f"UPDATE {MANIFEST_TABLE} SET run_status='failed', failure_stage='silver', failure_message='{str(error).replace("'", "''")[:2000]}', updated_at=current_timestamp() WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
         )

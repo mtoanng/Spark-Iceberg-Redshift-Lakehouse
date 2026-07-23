@@ -1,9 +1,11 @@
 # Airflow image for the NYC HVFHV orchestration plane.
 # Glue/PySpark runs remotely; this image does not start local Spark.
 # This image is only for the Airflow orchestration plane.
-FROM apache/airflow:3.3.0
+FROM apache/airflow:3.3.0-python3.12
 
 USER airflow
+
+RUN mkdir -p /opt/airflow/runtime
 
 COPY --chown=airflow:root requirements-airflow.txt /tmp/requirements-airflow.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-airflow.txt

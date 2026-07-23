@@ -32,7 +32,17 @@ resource "aws_iam_role_policy" "glue_lakehouse" {
         Resource = aws_s3_bucket.lakehouse.arn
       },
       {
-        Sid    = "LakehouseObjects"
+        Sid    = "ReadSourceReferenceAndArtifacts"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.lakehouse.arn}/${var.landing_prefix}/*",
+          "${aws_s3_bucket.lakehouse.arn}/${var.reference_prefix}/*",
+          "${aws_s3_bucket.lakehouse.arn}/glue_jobs/*"
+        ]
+      },
+      {
+        Sid    = "ManageCanonicalTablesAndRunArtifacts"
         Effect = "Allow"
         Action = [
           "s3:AbortMultipartUpload",
@@ -41,7 +51,11 @@ resource "aws_iam_role_policy" "glue_lakehouse" {
           "s3:ListMultipartUploadParts",
           "s3:PutObject"
         ]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/*"
+        Resource = [
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/*",
+          "${aws_s3_bucket.lakehouse.arn}/tmp/*",
+          "${aws_s3_bucket.lakehouse.arn}/manifests/*"
+        ]
       },
       {
         Sid    = "GlueCatalog"
@@ -162,6 +176,58 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         Effect   = "Allow"
         Action   = ["glue:StartJobRun", "glue:GetJobRun", "glue:GetJobRuns", "glue:GetJob"]
         Resource = "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:job/${var.project_name}-${var.environment}-*"
+      },
+      {
+        Sid    = "RunDbtGlueInteractiveSession"
+        Effect = "Allow"
+        Action = [
+          "glue:CreateSession",
+          "glue:DeleteSession",
+          "glue:GetSession",
+          "glue:GetStatement",
+          "glue:RunStatement",
+          "glue:StopSession",
+          "glue:TagResource"
+        ]
+        Resource = "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:session/${var.project_name}-${var.environment}-*"
+      },
+      {
+        Sid      = "PassGlueRoleToDbtSession"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = aws_iam_role.glue_service.arn
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "glue.amazonaws.com" }
+        }
+      },
+      {
+        Sid    = "ManageGoldCatalogForDbt"
+        Effect = "Allow"
+        Action = [
+          "glue:CreateTable",
+          "glue:DeleteTable",
+          "glue:GetDatabase",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:UpdateTable"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/gold",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/gold/*"
+        ]
+      },
+      {
+        Sid    = "ManageGoldObjectsForDbt"
+        Effect = "Allow"
+        Action = [
+          "s3:AbortMultipartUpload",
+          "s3:DeleteObject",
+          "s3:GetObject",
+          "s3:ListMultipartUploadParts",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/gold/*"
       },
       {
         Sid    = "ReadLandingAndReference"

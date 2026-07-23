@@ -13,35 +13,61 @@ jobs:
     name: Python fixtures and contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
       - name: Install credential-independent test tools
-        run: python -m pip install --upgrade pytest boto3 great-expectations dbt-core dbt-spark
+        run: python -m pip install --requirement requirements-ci.txt
+      - name: Validate repository hygiene
+        run: python scripts/check_repository_hygiene.py
       - name: Compile Python
-        run: python -m compileall -q athena etl tests
+        run: python -m compileall -q athena etl scripts tests
       - name: Run unit and contract tests
         run: python -m pytest -p no:cacheprovider tests/unit tests/contract -q
       - name: Validate Glue package contract
         run: python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
       - name: Validate shell syntax
         run: bash -n scripts/bootstrap_airflow_runner.sh
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
       - name: Parse dbt graph without credentials
         working-directory: etl/dbt_project
         env:
-          GLUE_ROLE_ARN: arn:aws:iam::000000000000:role/local-parse-only
-          S3_GOLD_PATH: s3://local-parse-only/gold
-        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target local_parse --no-partial-parse && dbt compile --profiles-dir . --target local_parse --no-partial-parse
+          GLUE_ROLE_ARN: arn:aws:iam::000000000000:role/ci-not-used
+          S3_GOLD_PATH: s3://ci-not-used/warehouse/gold
+        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target ci --no-partial-parse && dbt compile --profiles-dir . --target ci --no-partial-parse --no-introspect
 
   terraform:
     name: Terraform format and validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.15.8"
+      - name: Build Terraform file dependency
+        run: python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
       - name: Format check
         run: terraform fmt -check -recursive terraform
       - name: Validate without a backend

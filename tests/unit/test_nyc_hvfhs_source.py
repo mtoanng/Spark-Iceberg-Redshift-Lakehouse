@@ -12,6 +12,7 @@ from etl.sources.nyc_hvfhs import (
     CBD_CONGESTION_FEE_COLUMN,
     ManifestAction,
     SourceContractError,
+    SourceFile,
     SourceManifestEntry,
     inspect_local_source,
     canonical_trip_id,
@@ -20,6 +21,7 @@ from etl.sources.nyc_hvfhs import (
     required_trip_columns,
     stable_run_id,
     validate_trip_schema,
+    validate_landed_source,
 )
 
 
@@ -34,6 +36,25 @@ def test_official_monthly_uri_is_deterministic() -> None:
     assert monthly_trip_uri(2024, 1) == (
         "https://d37ci6vzurychx.cloudfront.net/trip-data/fhvhv_tripdata_2024-01.parquet"
     )
+
+
+def test_landed_source_requires_exact_s3_month_checksum_and_size() -> None:
+    valid = SourceFile(
+        2024,
+        1,
+        "s3://bucket/landing/fhvhv_tripdata_2024-01.parquet",
+        "a" * 64,
+        123,
+    )
+    validate_landed_source(valid)
+    with pytest.raises(SourceContractError, match="s3://"):
+        validate_landed_source(
+            SourceFile(2024, 1, monthly_trip_uri(2024, 1), "a" * 64, 123)
+        )
+    with pytest.raises(SourceContractError, match="SHA-256"):
+        validate_landed_source(
+            SourceFile(2024, 1, valid.source_uri, "not-a-checksum", 123)
+        )
 
 
 def test_2024_fixture_is_source_shaped_and_contains_required_scenarios() -> None:

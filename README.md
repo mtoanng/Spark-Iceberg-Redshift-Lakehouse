@@ -1,127 +1,161 @@
 # NYC HVFHV Iceberg Lakehouse
-<img width="1231" height="627" alt="image" src="https://github.com/user-attachments/assets/b272c3c1-77b4-4ed0-baf1-cfb1f3dfa153" />
 
-An AWS lakehouse for the official NYC TLC High-Volume For-Hire Vehicle (HVFHV)
-trip dataset. The pipeline is month-scoped and uses Amazon S3, AWS Glue,
-Apache Iceberg, Great Expectations, dbt, Airflow 3, and Amazon Athena.
+A bounded monthly lakehouse for the official NYC TLC High-Volume For-Hire
+Vehicle (HVFHV) trip records. The repository is designed for a Junior Data
+Engineer portfolio: one month is the first deployment slice and four
+consecutive months are the backfill demonstration.
 
-> **End-to-end data lakehouse with ML-powered product recommendations**  
-
----
-
-```text
-NYC TLC Parquet + Taxi Zone lookup
-  -> S3 landing/reference
-  -> Glue/PySpark Bronze + Iceberg
-  -> Great Expectations promotion gate
-  -> Glue/PySpark Silver + reason-coded quarantine
-  -> dbt-glue Gold
-  -> publication manifest
-  -> read-only Athena query pack
+```mermaid
+flowchart LR
+    TLC[Official NYC TLC Parquet] --> LAND[S3 landing]
+    LAND --> B[Glue Bronze Iceberg]
+    B --> GE[Blocking Great Expectations gate]
+    GE --> S[Glue Silver + quarantine]
+    S --> G[dbt-glue Gold Iceberg]
+    G --> R[Reconciliation]
+    R --> M[Publication manifest]
+    M --> A[Athena read-only queries]
+    AF[Airflow 3] --> B
+    AF --> GE
+    AF --> S
+    AF --> G
+    AF --> R
+    AF --> M
+    AF --> A
 ```
 
-Iceberg tables in S3 and the AWS Glue Data Catalog are the canonical storage
-and catalog layers. Athena is the bounded analytical serving layer. Invalid
-rows are retained in Silver quarantine with deterministic reason codes; they
-are not silently discarded.
+Iceberg objects in Amazon S3 and metadata in AWS Glue Data Catalog are
+canonical. Athena is only the bounded analytical serving layer.
 
 ## Status
 
-Closures A–C are implemented as static, credential-independent code and
-contracts. Local verification currently includes:
+| Area | Status |
+| --- | --- |
+| Source, manifest, Bronze/Silver/quarantine, GE, DAG, Gold, publication, and Athena contracts | implemented and locally verified |
+| Glue packaging, Terraform format/validation, and credential-independent CI workflow | implemented and statically verified |
+| S3, Glue, Iceberg, dbt-glue, Airflow, Athena, IAM, retry, and teardown behavior in AWS | requires AWS execution verification |
+| 2025 schema evolution and automated Iceberg maintenance | not implemented |
 
-- 59 passing unit and contract tests;
-- Python compilation and focused lint/format checks;
-- Athena runner, SQL, and Gold smoke contracts;
-- deterministic Glue package validation; and
-- Terraform format and validation checks.
+No AWS deployment has been executed as evidence for this codebase. Do not
+describe it as production-ready, deployed, or cloud-verified.
 
-AWS credentials, S3/Glue/Iceberg execution, remote Great Expectations,
-Airflow scheduling, dbt-glue execution, Athena results, Terraform apply, and
-teardown remain **not verified**. No cloud resources are created by the local
-commands below.
+## Monthly lifecycle
 
-## Quick start: local checks
-
-Use the repository virtual environment. Local checks use fixtures and do not
-start a local Spark or Airflow service.
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\unit tests\contract -q
-.\.venv\Scripts\python.exe -m compileall -q athena etl tests
-.\.venv\Scripts\python.exe scripts\package_glue_jobs.py --output build\nyc_glue_jobs.zip --check
-
-$env:GLUE_ROLE_ARN = 'arn:aws:iam::000000000000:role/local-parse-only'
-$env:S3_GOLD_PATH = 's3://local-parse-only/gold'
-Push-Location etl\dbt_project
-..\..\.venv\Scripts\dbt.exe deps --profiles-dir .
-..\..\.venv\Scripts\dbt.exe parse --profiles-dir . --target local_parse --no-partial-parse
-Pop-Location
+```text
+immutable S3 URI + SHA-256 + byte size + year/month + run ID
+  -> month-scoped Bronze overwrite
+  -> structural Great Expectations gate
+  -> Silver valid rows + deterministic reason-coded quarantine
+  -> month-scoped dbt Iceberg merge into fct_trips
+  -> Gold reconciliation
+  -> durable publication manifest
+  -> partition-filtered Athena smoke query
 ```
 
-The `local_parse` target validates the dbt graph without cloud credentials.
-Do not run local `dbt compile` or a local Spark/Airflow service unless you
-intend to provide and manage those runtimes.
+Bronze preserves source rows and adds ingestion metadata. Great Expectations
+blocks missing columns or an empty requested month; Silver owns timestamp,
+zone, numeric, and duplicate validation. Every Bronze row must reconcile to
+exactly one Silver or quarantine row.
 
-## Repository map
+Gold is intentionally limited to:
 
-| Path | Purpose |
-| --- | --- |
-| `etl/sources` | Source and Taxi Zone contracts |
-| `etl/glue_jobs` | Bronze, Silver, quality, and Iceberg Glue entrypoints |
-| `etl/manifests` | Durable monthly run-manifest state machine |
-| `etl/quality` | Great Expectations suites and checkpoint logic |
-| `etl/dbt_project` | Six Iceberg Gold models and dbt tests |
-| `etl/dags` | Manually triggered Airflow 3 monthly DAGs |
-| `athena` | Read-only query runner and Gold smoke verifier |
-| `terraform` | Bounded NYC-only AWS deployment definition |
-| `scripts` | Packaging, release, reconciliation, smoke, and teardown helpers |
-| `tests/unit`, `tests/contract` | Credential-independent verification |
-| `docs` | Architecture, status, evidence, and operator runbooks |
+- `dim_date`, `dim_operator`, `dim_zone`
+- `fct_trips`
+- `mart_hourly_zone_demand`, `mart_operator_metrics`
 
-Gold contains exactly `dim_date`, `dim_operator`, `dim_zone`, `fct_trips`,
-`mart_hourly_zone_demand`, and `mart_operator_metrics`.
+`fct_trips` uses dbt-glue's Iceberg `merge` strategy with `trip_id` as the
+unique key and explicit `source_year`/`source_month` variables. Small
+dimensions and marts use simple table rebuilds over the bounded fact history.
 
-## Monthly execution model
+## Lightweight local verification
 
-An approved remote AWS run follows this order for each month:
+These checks do not require AWS credentials and do not start local Spark or
+Airflow:
 
-1. Upload the exact source Parquet and Taxi Zone lookup files after recording
-   their SHA-256 checksums and sizes.
-2. Initialize the Iceberg tables once.
-3. Run Bronze ingestion with the source URI, checksum, month, and run ID.
-4. Run the mandatory Great Expectations checkpoint. A blocking failure
-   persists `ge_blocked` and prevents Silver publication.
-5. Run Silver validation/transformation and reconcile valid rows with
-   reason-coded quarantine.
-6. Run `dbt build --target glue` for the six Gold models.
-7. Reconcile outputs, publish the validated manifest, and run the bounded
-   Athena smoke/business/history query pack.
+```powershell
+python -m compileall -q athena etl scripts tests
+python -m pytest -p no:cacheprovider tests/unit tests/contract -q
+python scripts/check_repository_hygiene.py
+python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+terraform fmt -check -recursive terraform
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+```
 
-The Airflow DAG `nyc_hvfhs_monthly` exposes `year`, `month`, and `force`
-parameters. `nyc_hvfhs_four_month_backfill` sequences four monthly runs.
-`force` permits retrying an identical completed source; it does not permit a
-different checksum to replace an existing source.
+CI additionally installs [requirements-ci.txt](requirements-ci.txt), validates
+shell syntax, and runs credential-independent `dbt deps`, `dbt parse`, and
+`dbt compile --no-introspect` through a closed local Thrift target. Use CI or
+a disposable remote development machine for that adapter check; the laptop is
+not a Spark runtime.
 
-## Remote deployment and teardown
+## Source staging
 
-These are operator runbooks for an approved disposable AWS environment, not
-evidence that AWS has been run:
+Production source files are ignored by Git. Check disk space before downloading
+the approximately 0.5 GB monthly file:
 
+```powershell
+python -m scripts.fetch_source --year 2024 --month 1 --output-dir data
+python -m scripts.upload_release_dataset --bucket <bucket> --year 2024 --month 1
+```
+
+The downloader also checks the server-provided content length before writing
+and preserves a 256 MiB free-space reserve; it removes an incomplete `.part`
+file on failure.
+
+The second command is a dry-run plan. During an approved deployment, add
+`--execute` to upload the exact local files through the AWS SDK default
+credential chain. It records SHA-256 metadata, verifies uploaded byte size,
+skips an identical object, and refuses to replace a changed landing object.
+Its JSON output contains the Airflow source variables.
+
+Before reading, Bronze performs a read-only S3 metadata check against that
+SHA-256 and source byte size; the Taxi Zone object checksum is checked too.
+
+Glue never reads from the laptop or directly from the TLC website. Its
+`SOURCE_URI` must be the landed object:
+
+```text
+s3://<bucket>/landing/fhvhv_tripdata_2024-01.parquet
+```
+
+## Orchestration
+
+The manually triggered Airflow flow is:
+
+```text
+prepare_month
+  -> bronze_ingestion
+  -> great_expectations_checkpoint
+  -> silver_transform
+  -> dbt_build
+  -> reconciliation
+  -> publication_manifest
+  -> athena_smoke
+```
+
+`nyc_hvfhs_four_month_backfill` triggers four monthly DAG runs sequentially
+and performs calendar-year rollover correctly. The controlled portfolio run
+remains January-April 2024. `force=true` retries only the same URI, checksum,
+and byte size; it cannot approve source replacement.
+
+## Deployment and operations
+
+- [Architecture](docs/ARCHITECTURE.md)
 - [Implementation status](docs/IMPLEMENTATION_STATUS.md)
-- [Deployment runbook](docs/DEPLOYMENT_RUNBOOK.md)
-- [Cloud demo and teardown runbook](docs/CLOUD_DEMO_RUNBOOK.md)
+- [Deployment code status](docs/DEPLOYMENT_CODE_STATUS.md)
+- [One-month deployment runbook](docs/DEPLOYMENT_RUNBOOK.md)
+- [Four-month backfill runbook](docs/FOUR_MONTH_BACKFILL_RUNBOOK.md)
+- [Teardown runbook](docs/TEARDOWN_RUNBOOK.md)
 - [Cloud evidence template](docs/CLOUD_EVIDENCE_TEMPLATE.md)
 - [Codebase index](docs/CODEBASE_INDEX.md)
-- [Project blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md)
+- [Dataset notes](docs/DATASET_NOTES.md)
 
-Before any apply or teardown, review the plan, set a budget limit, confirm
-data-retention requirements, and obtain explicit approval. Terraform is
-configured with protected storage and does not implicitly delete canonical
-data.
+Terraform protects canonical storage with versioning, SSE-S3, blocked public
+access, and `force_destroy = false`. Advanced snapshot expiration, orphan-file
+deletion, compaction automation, schema evolution, and full-year processing
+remain deferred until the first controlled deployment is verified.
 
-## Scope boundary
-
-The active project is the NYC HVFHV lakehouse. The `legacy/` tree contains
-archived Instacart-era code and documentation and is not part of the active
-pipeline.
+The optional Terraform runner is a private, IMDSv2-only EC2 host; shared VPC,
+NAT, endpoints, Docker installation, and SSM connectivity are explicit
+operator prerequisites documented in the runbook rather than silently created
+by this project.

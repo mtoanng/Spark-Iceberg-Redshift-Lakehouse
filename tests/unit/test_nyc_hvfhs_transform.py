@@ -79,3 +79,13 @@ def test_rerun_does_not_add_existing_canonical_trip() -> None:
     assert len(first_run.silver_rows) == 1
     assert len(second_run.silver_rows) == 0
     assert second_run.quarantine_rows[0]["reason_code"] == "DUPLICATE_TRIP_ID"
+
+
+def test_silver_validates_request_pickup_dropoff_timeline() -> None:
+    row = dict(_bronze().rows[0])
+    row["request_datetime"] = "2024-01-15T08:10:00"
+    result = transform_silver(
+        [row], load_zone_ids(FIXTURE_DIR / "taxi_zone_lookup.fixture.csv")
+    )
+    assert not result.silver_rows
+    assert result.quarantine_rows[0]["reason_code"] == "PICKUP_BEFORE_REQUEST"

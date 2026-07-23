@@ -22,6 +22,7 @@ wheels/
 MANIFEST
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -39,10 +40,9 @@ venv.bak/
 # Jupyter
 .ipynb_checkpoints
 
-# GCP Credentials
+# Credentials
 credentials/
 *.json
-!dbt_instacart/**/*.json
 !terraform/**/*.json
 .gcp/
 service-account-*.json
@@ -61,7 +61,6 @@ data/
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.backup
-terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
 
 # Airflow
@@ -89,9 +88,6 @@ derby.log
 .env.local
 .env.*.local
 
-# Kaggle
-.kaggle/kaggle.json
-
 # Logs
 logs/
 *.log
@@ -115,10 +111,8 @@ temp/
 *.tar.gz
 *.tgz
 scratch/
-scripts/
 
-# Documentation build
-docs/
+# Documentation build output
 site/
 
 # PyCharm

@@ -15,6 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 import re
 from typing import Iterable, Mapping
+from urllib.parse import urlparse
 
 
 NYC_TLC_TRIP_DATA_BASE_URI = "https://d37ci6vzurychx.cloudfront.net/trip-data"
@@ -152,6 +153,22 @@ def monthly_trip_filename(year: int, month: int) -> str:
 def monthly_trip_uri(year: int, month: int) -> str:
     """Return the official TLC monthly HVFHV URI without downloading it."""
     return f"{NYC_TLC_TRIP_DATA_BASE_URI}/{monthly_trip_filename(year, month)}"
+
+
+def validate_landed_source(source: SourceFile) -> None:
+    """Require one immutable, checksum-pinned monthly object in S3 landing."""
+
+    _validate_year_month(source.source_year, source.source_month)
+    parsed = urlparse(source.source_uri)
+    expected_name = monthly_trip_filename(source.source_year, source.source_month)
+    if parsed.scheme != "s3" or not parsed.netloc or Path(parsed.path).name != expected_name:
+        raise SourceContractError(
+            f"landed source must be an s3:// URI ending in {expected_name}."
+        )
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", source.source_checksum):
+        raise SourceContractError("landed source checksum must be a SHA-256 hex digest.")
+    if source.source_size_bytes <= 0:
+        raise SourceContractError("landed source size must be greater than zero bytes.")
 
 
 def required_trip_columns(year: int) -> frozenset[str]:

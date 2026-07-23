@@ -1,65 +1,44 @@
 # Cloud evidence template
 
-Status: **NOT VERIFIED** until a bounded cloud run populates every required
-field with retained output.
+Status: **NOT VERIFIED** until completed from a real bounded AWS run.
 
-## Run identity
+## Run and source identity
 
-- Environment label:
-- AWS region:
-- UTC start/end:
-- Operator/change reference:
-- Budget alert reference:
+- Environment, region, UTC start/end, operator/change reference:
+- Budget alert and estimated cost:
+- Month, source S3 URI, bytes, SHA-256, ingestion run ID:
+- Taxi Zone URI, bytes, SHA-256:
 
-## Source identity
+## Provisioning and orchestration
 
-| Month | Object URI | Bytes | SHA-256 | Upload evidence |
-| --- | --- | ---: | --- | --- |
-| 2024-01 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-02 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-03 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-04 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
+- Terraform plan/apply summary:
+- S3, Glue database/job, IAM role, Athena workgroup identifiers:
+- Airflow monthly DAG run and task states:
+- Retry/clear-and-rerun evidence:
+- Immutable-source rejection experiment:
 
-## Infrastructure
+## Data lifecycle
 
-- Terraform version/output:
-- Plan summary:
-- Apply summary:
-- S3 bucket:
-- Glue database:
-- Glue role:
-- Glue job names/run IDs:
-- Destroy plan/apply summary:
+| Check | Evidence |
+| --- | --- |
+| Bronze rows | NOT VERIFIED |
+| Great Expectations blocking result | NOT VERIFIED |
+| Silver rows | NOT VERIFIED |
+| Quarantine rows and reason distribution | NOT VERIFIED |
+| Bronze = Silver + quarantine | NOT VERIFIED |
+| Gold fact = Silver | NOT VERIFIED |
+| Six Gold models/tests | NOT VERIFIED |
+| Publication manifest URI/status | NOT VERIFIED |
+| Independent business-total check | NOT VERIFIED |
 
-## Data evidence
+## Athena and operations
 
-| Month | Bronze | Silver | Quarantine | Gold fact | Reconciles? |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 2024-01 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-02 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-03 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-04 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
+- Query IDs, expected columns, non-empty result:
+- Required partition filter and bytes scanned:
+- Failure/recovery notes:
+- Teardown plan/apply and retained canonical resources:
+- Remaining resources and expected cost:
 
-## Orchestration and quality
-
-- Airflow monthly DAG run:
-- Three-month sequence:
-- Retry evidence:
-- Clear-and-rerun evidence:
-- Force/checksum decision:
-- Quality checkpoint run/log:
-- dbt build/test output:
-- Great Expectations checkpoint output:
-- Athena query IDs, outputs, scanned bytes, and result locations:
-
-## Lifecycle (Phase 7)
-
-- 2025 schema evolution run:
-- Snapshot manifest URI/checksum:
-- Exact snapshot IDs:
-- Manual Athena version-travel query:
-- File metrics:
-- Compaction decision:
-- Retention dry-run:
-- Orphan-file dry-run:
-- Any destructive operation approval:
+For a four-month run, duplicate the source/data sections per month and attach
+the sequential parent/child DAG evidence. Do not invent counts, snapshot IDs,
+costs, or query plans.
