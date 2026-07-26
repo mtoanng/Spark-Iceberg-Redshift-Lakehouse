@@ -45,6 +45,7 @@ BRONZE_SOURCE_COLUMNS = (
 )
 
 INGESTION_COLUMNS = (
+    ("_source_uri", "STRING"),
     ("_source_file", "STRING"),
     ("_source_year", "INT"),
     ("_source_month", "INT"),
@@ -53,8 +54,16 @@ INGESTION_COLUMNS = (
     ("_ingested_at", "TIMESTAMP"),
 )
 
+IDENTITY_COLUMNS = (
+    ("row_id", "STRING"),
+    ("business_trip_key", "STRING"),
+    ("identity_policy_version", "STRING"),
+)
+
 SILVER_COLUMNS = (
-    ("trip_id", "STRING"),
+    ("row_id", "STRING"),
+    ("business_trip_key", "STRING"),
+    ("identity_policy_version", "STRING"),
     ("operator_code", "STRING"),
     ("request_datetime", "TIMESTAMP"),
     ("pickup_datetime", "TIMESTAMP"),
@@ -82,7 +91,7 @@ TABLE_SPECS = (
     TableSpec(
         "bronze",
         "bronze_hvfhs_trips",
-        BRONZE_SOURCE_COLUMNS + INGESTION_COLUMNS,
+        BRONZE_SOURCE_COLUMNS + INGESTION_COLUMNS + IDENTITY_COLUMNS,
         ("_source_year", "_source_month"),
     ),
     TableSpec(
@@ -105,8 +114,8 @@ TABLE_SPECS = (
         "quarantine_trips",
         BRONZE_SOURCE_COLUMNS
         + INGESTION_COLUMNS
+        + IDENTITY_COLUMNS
         + (
-            ("trip_id", "STRING"),
             ("pickup_zone_id", "INT"),
             ("dropoff_zone_id", "INT"),
             ("reason_code", "STRING"),
@@ -123,6 +132,7 @@ TABLE_SPECS = (
             ("source_year", "INT"),
             ("source_month", "INT"),
             ("ingestion_run_id", "STRING"),
+            ("identity_policy_version", "STRING"),
             ("run_status", "STRING"),
             ("first_seen_at", "TIMESTAMP"),
             ("updated_at", "TIMESTAMP"),
@@ -130,6 +140,9 @@ TABLE_SPECS = (
             ("silver_row_count", "BIGINT"),
             ("quarantine_row_count", "BIGINT"),
             ("gold_row_count", "BIGINT"),
+            ("bronze_snapshot_id", "STRING"),
+            ("silver_snapshot_id", "STRING"),
+            ("quarantine_snapshot_id", "STRING"),
             ("validation_status", "STRING"),
             ("validation_result_uri", "STRING"),
             ("validation_result_summary", "STRING"),
@@ -143,6 +156,24 @@ TABLE_SPECS = (
         ("source_year", "source_month"),
     ),
 )
+
+
+def schema_evolution_ddl(
+    *,
+    catalog: str = "glue_catalog",
+    bronze_database: str = "bronze",
+    silver_database: str = "silver",
+) -> tuple[str, ...]:
+    """Return only the approved 2025 nullable-column evolution."""
+
+    return (
+        f"ALTER TABLE {catalog}.{bronze_database}.bronze_hvfhs_trips "
+        "ADD COLUMN cbd_congestion_fee DOUBLE",
+        f"ALTER TABLE {catalog}.{silver_database}.silver_trips "
+        "ADD COLUMN cbd_congestion_fee DOUBLE",
+        f"ALTER TABLE {catalog}.{silver_database}.quarantine_trips "
+        "ADD COLUMN cbd_congestion_fee DOUBLE",
+    )
 
 
 def namespace_ddl(namespace: str, *, catalog: str = "glue_catalog") -> str:

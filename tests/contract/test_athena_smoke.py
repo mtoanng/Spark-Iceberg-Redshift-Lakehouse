@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from athena.query_runner import AthenaQueryError, AthenaQueryResult
-from athena.verify_gold import EXPECTED_GOLD_COLUMNS, verify_gold_catalog, verify_gold_smoke
+from athena.verify_gold import (
+    EXPECTED_GOLD_COLUMNS,
+    verify_gold_catalog,
+    verify_gold_smoke,
+)
 
 
 class FakeRunner:
@@ -55,7 +59,7 @@ def _result(
         "q-smoke",
         (
             "row_count",
-            "distinct_trip_count",
+            "distinct_row_count",
             "min_pickup_datetime",
             "max_dropoff_datetime",
         ),
@@ -104,9 +108,7 @@ def test_gold_catalog_rejects_missing_table_or_column() -> None:
     with pytest.raises(AthenaQueryError, match="missing expected tables"):
         verify_gold_catalog(FakeGlue(missing_table="dim_zone"), database="gold")
     with pytest.raises(AthenaQueryError, match="missing columns"):
-        verify_gold_catalog(
-            FakeGlue(missing_column="source_month"), database="gold"
-        )
+        verify_gold_catalog(FakeGlue(missing_column="source_month"), database="gold")
     with pytest.raises(AthenaQueryError, match="out-of-scope"):
         verify_gold_catalog(FakeGlue(extra_table="stale_model"), database="gold")
 

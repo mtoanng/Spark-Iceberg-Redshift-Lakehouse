@@ -11,7 +11,16 @@ from pyspark.context import SparkContext
 from pyspark.storagelevel import StorageLevel
 from pyspark.sql.functions import current_timestamp, input_file_name, lit
 
-from etl.sources.nyc_hvfhs import SourceFile, stable_run_id, validate_landed_source
+from etl.contracts.nyc_hvfhs_identity import (
+    identity_policy_version,
+    spark_identity_expressions,
+)
+from etl.sources.nyc_hvfhs import (
+    SourceFile,
+    stable_run_id,
+    validate_landed_source,
+    validate_trip_schema,
+)
 
 
 REQUIRED_ARGS = [
@@ -67,6 +76,7 @@ def _merge_manifest(
     *,
     status: str,
     bronze_count: int = 0,
+    bronze_snapshot_id: str | None = None,
     failure_stage: str | None = None,
     failure_message: str | None = None,
 ) -> None:
@@ -79,13 +89,15 @@ def _merge_manifest(
                 int(args["SOURCE_MONTH"]),
                 int(_optional_arg("SOURCE_SIZE_BYTES", "0")),
                 args["INGESTION_RUN_ID"],
+                identity_policy_version(int(args["SOURCE_YEAR"])),
                 status,
                 bronze_count,
+                bronze_snapshot_id,
                 failure_stage,
                 failure_message,
             )
         ],
-        "source_uri string, source_checksum string, source_year int, source_month int, source_size_bytes long, ingestion_run_id string, run_status string, bronze_row_count long, failure_stage string, failure_message string",
+        "source_uri string, source_checksum string, source_year int, source_month int, source_size_bytes long, ingestion_run_id string, identity_policy_version string, run_status string, bronze_row_count long, bronze_snapshot_id string, failure_stage string, failure_message string",
     )
     update.createOrReplaceTempView("manifest_update")
     spark.sql(
@@ -106,6 +118,7 @@ def _merge_manifest(
           target.source_size_bytes = source.source_size_bytes
         THEN UPDATE SET
           source_uri = source.source_uri, source_size_bytes = source.source_size_bytes, ingestion_run_id = source.ingestion_run_id,
+          identity_policy_version = source.identity_policy_version,
           run_status = CASE
             WHEN source.run_status = 'failed' AND target.run_status IN ('silver_published', 'reconciled', 'published')
               THEN target.run_status
@@ -116,6 +129,7 @@ def _merge_manifest(
               THEN target.bronze_row_count
             ELSE source.bronze_row_count
           END,
+          bronze_snapshot_id = CASE WHEN source.run_status = 'bronze_published' THEN source.bronze_snapshot_id ELSE target.bronze_snapshot_id END,
           silver_row_count = CASE WHEN source.run_status = 'bronze_published' THEN 0 ELSE target.silver_row_count END,
           quarantine_row_count = CASE WHEN source.run_status = 'bronze_published' THEN 0 ELSE target.quarantine_row_count END,
           gold_row_count = CASE WHEN source.run_status = 'bronze_published' THEN 0 ELSE target.gold_row_count END,
@@ -129,8 +143,8 @@ def _merge_manifest(
           failure_stage = source.failure_stage,
           failure_message = source.failure_message,
           updated_at = current_timestamp()
-        WHEN NOT MATCHED THEN INSERT (source_uri, source_checksum, source_size_bytes, source_year, source_month, ingestion_run_id, run_status, first_seen_at, updated_at, bronze_row_count, silver_row_count, quarantine_row_count, failure_stage, failure_message)
-          VALUES (source.source_uri, source.source_checksum, source.source_size_bytes, source.source_year, source.source_month, source.ingestion_run_id, source.run_status, current_timestamp(), current_timestamp(), source.bronze_row_count, 0, 0, source.failure_stage, source.failure_message)
+        WHEN NOT MATCHED THEN INSERT (source_uri, source_checksum, source_size_bytes, source_year, source_month, ingestion_run_id, identity_policy_version, run_status, first_seen_at, updated_at, bronze_row_count, bronze_snapshot_id, silver_row_count, quarantine_row_count, failure_stage, failure_message)
+          VALUES (source.source_uri, source.source_checksum, source.source_size_bytes, source.source_year, source.source_month, source.ingestion_run_id, source.identity_policy_version, source.run_status, current_timestamp(), current_timestamp(), source.bronze_row_count, source.bronze_snapshot_id, 0, 0, source.failure_stage, source.failure_message)
     """
     )
 
@@ -169,7 +183,9 @@ def main() -> None:
     )
     validate_landed_source(source)
     if stable_run_id(source) != args["INGESTION_RUN_ID"]:
-        raise ValueError("INGESTION_RUN_ID does not match the immutable source identity.")
+        raise ValueError(
+            "INGESTION_RUN_ID does not match the immutable source identity."
+        )
     if not args["TAXI_ZONE_URI"].startswith("s3://"):
         raise ValueError("TAXI_ZONE_URI must reference the S3 reference prefix.")
     if len(args["TAXI_ZONE_CHECKSUM"]) != 64 or any(
@@ -181,6 +197,7 @@ def main() -> None:
     job = Job(glue_context)
     job.init(args["JOB_NAME"], args)
     spark = glue_context.spark_session
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
     trips_cached = False
     try:
         _verify_landed_object(
@@ -192,19 +209,32 @@ def main() -> None:
         if not _may_process(spark):
             job.commit()
             return
+        source_frame = spark.read.parquet(args["SOURCE_URI"])
+        validate_trip_schema(source_frame.columns, int(args["SOURCE_YEAR"]))
+        exact_id, probable_key, policy = spark_identity_expressions(
+            int(args["SOURCE_YEAR"])
+        )
         trips = (
-            spark.read.parquet(args["SOURCE_URI"])
+            source_frame.withColumn("_source_uri", lit(args["SOURCE_URI"]))
             .withColumn("_source_file", input_file_name())
             .withColumn("_source_year", lit(int(args["SOURCE_YEAR"])))
             .withColumn("_source_month", lit(int(args["SOURCE_MONTH"])))
             .withColumn("_source_checksum", lit(args["SOURCE_CHECKSUM"]))
             .withColumn("_ingestion_run_id", lit(args["INGESTION_RUN_ID"]))
             .withColumn("_ingested_at", current_timestamp())
+            .withColumn("row_id", exact_id)
+            .withColumn("business_trip_key", probable_key)
+            .withColumn("identity_policy_version", policy)
         )
         trips.persist(StorageLevel.MEMORY_AND_DISK)
         trips_cached = True
         bronze_count = trips.count()
         trips.writeTo(TRIPS_TABLE).overwritePartitions()
+        snapshot = spark.sql(
+            f"SELECT snapshot_id FROM {TRIPS_TABLE}.snapshots "
+            "ORDER BY committed_at DESC LIMIT 1"
+        ).first()
+        bronze_snapshot_id = str(snapshot.snapshot_id) if snapshot else None
         trips.unpersist()
         trips_cached = False
         zones = (
@@ -218,14 +248,17 @@ def main() -> None:
             .withColumn("_ingested_at", current_timestamp())
         )
         zones.writeTo(ZONES_TABLE).overwritePartitions()
-        _merge_manifest(spark, status="bronze_published", bronze_count=bronze_count)
+        _merge_manifest(
+            spark,
+            status="bronze_published",
+            bronze_count=bronze_count,
+            bronze_snapshot_id=bronze_snapshot_id,
+        )
         job.commit()
     except Exception as error:
         if trips_cached:
             trips.unpersist()
-        failure_stage = (
-            "source_manifest" if "Landed object" in str(error) else "bronze"
-        )
+        failure_stage = "source_manifest" if "Landed object" in str(error) else "bronze"
         _merge_manifest(
             spark,
             status="failed",

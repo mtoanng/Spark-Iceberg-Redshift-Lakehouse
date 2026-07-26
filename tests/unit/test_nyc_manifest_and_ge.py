@@ -64,17 +64,12 @@ def test_blocking_ge_failure_persists_failure_and_prevents_silver() -> None:
         blocked.silver_published(1, 0, at=NOW)
 
 
-def test_ge_observes_row_invalidity_while_silver_preserves_quarantine_evidence() -> (
-    None
-):
+def test_ge_is_structural_while_silver_preserves_quarantine_evidence() -> None:
     bronze = _bronze()
     zones = load_zone_ids(FIXTURE_DIR / "taxi_zone_lookup.fixture.csv")
     ge_result = evaluate_fixture_ge_checkpoint(bronze.rows, zones)
     silver = transform_silver(bronze.rows, zones)
     assert ge_result.blocking_success
-    assert (
-        ge_result.observed_invalid_row_count == 3
-    )  # duplicate identity is a Silver-only rule
     assert len(silver.quarantine_rows) == 4
     assert all(row["reason_code"] for row in silver.quarantine_rows)
 
@@ -83,7 +78,11 @@ def test_ge_suite_uses_installed_great_expectations_configuration() -> None:
     suite = expectation_suite()
     assert suite.name == "nyc_hvfhs_bronze_pre_silver"
     assert len(suite.expectations) >= 10
-    assert suite.meta["quarantine_contract"] == "etl.transforms.nyc_hvfhs._reason_code"
+    assert suite.meta["scope"] == "required_columns_non_empty_month_identity_inputs"
+    assert (
+        suite.meta["row_validation_owner"]
+        == "etl.contracts.nyc_hvfhs_quality.reason_code"
+    )
 
 
 def test_retry_safety_allows_only_identical_forced_completed_source() -> None:

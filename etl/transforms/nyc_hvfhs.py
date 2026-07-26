@@ -15,16 +15,28 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 
-from etl.sources.nyc_hvfhs import SourceContractError, SourceFile, canonical_trip_id, validate_trip_schema
+from etl.contracts.nyc_hvfhs_identity import identity_policy_version
+from etl.contracts.nyc_hvfhs_quality import reason_code
+from etl.sources.nyc_hvfhs import (
+    SourceContractError,
+    SourceFile,
+    canonical_business_trip_key,
+    canonical_row_id,
+    validate_trip_schema,
+)
 
 
 METADATA_COLUMNS = (
+    "_source_uri",
     "_source_file",
     "_source_year",
     "_source_month",
     "_source_checksum",
     "_ingestion_run_id",
     "_ingested_at",
+    "row_id",
+    "business_trip_key",
+    "identity_policy_version",
 )
 
 
@@ -56,7 +68,9 @@ def _source_filename(source_uri: str) -> str:
     parsed = urlparse(source_uri)
     filename = Path(parsed.path).name
     if not filename:
-        raise SourceContractError(f"Source URI does not contain a filename: {source_uri}")
+        raise SourceContractError(
+            f"Source URI does not contain a filename: {source_uri}"
+        )
     return filename
 
 
@@ -76,6 +90,7 @@ def bronze_records(
 
     recorded_at = ingested_at or datetime.now(timezone.utc)
     metadata = {
+        "_source_uri": source.source_uri,
         "_source_file": _source_filename(source.source_uri),
         "_source_year": source.source_year,
         "_source_month": source.source_month,
@@ -83,8 +98,16 @@ def bronze_records(
         "_ingestion_run_id": ingestion_run_id,
         "_ingested_at": recorded_at,
     }
+    rows = []
+    for record in materialized:
+        identity = {
+            "row_id": canonical_row_id(record, source.source_year),
+            "business_trip_key": canonical_business_trip_key(record),
+            "identity_policy_version": identity_policy_version(source.source_year),
+        }
+        rows.append({**record, **metadata, **identity})
     return BronzeBatch(
-        rows=tuple({**record, **metadata} for record in materialized),
+        rows=tuple(rows),
         source=source,
         ingestion_run_id=ingestion_run_id,
     )
@@ -108,86 +131,39 @@ def _as_datetime(value: object) -> datetime | None:
         return None
 
 
-def _as_float(value: object) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _reason_code(row: Mapping[str, object], zone_ids: set[int]) -> str | None:
-    requested = _as_datetime(row.get("request_datetime"))
-    pickup = _as_datetime(row.get("pickup_datetime"))
-    dropoff = _as_datetime(row.get("dropoff_datetime"))
-    if requested is None or pickup is None or dropoff is None:
-        return "MISSING_OR_INVALID_TIMESTAMP"
-    if pickup < requested:
-        return "PICKUP_BEFORE_REQUEST"
-    if dropoff < pickup:
-        return "DROPOFF_BEFORE_PICKUP"
-    try:
-        pickup_zone = int(row["PULocationID"])
-        dropoff_zone = int(row["DOLocationID"])
-    except (KeyError, TypeError, ValueError):
-        return "INVALID_ZONE_ID"
-    if pickup_zone not in zone_ids:
-        return "UNKNOWN_PICKUP_ZONE"
-    if dropoff_zone not in zone_ids:
-        return "UNKNOWN_DROPOFF_ZONE"
-    for column, code in (
-        ("trip_miles", "NEGATIVE_TRIP_MILES"),
-        ("trip_time", "NEGATIVE_TRIP_TIME"),
-        ("base_passenger_fare", "NEGATIVE_PASSENGER_FARE"),
-        ("tolls", "NEGATIVE_TOLLS"),
-        ("sales_tax", "NEGATIVE_SALES_TAX"),
-        ("tips", "NEGATIVE_TIPS"),
-        ("driver_pay", "NEGATIVE_DRIVER_PAY"),
-    ):
-        metric = _as_float(row.get(column))
-        if metric is None:
-            return f"INVALID_{column.upper()}"
-        if metric < 0:
-            return code
-    return None
-
-
-def _quarantine_row(row: Mapping[str, object], reason_code: str, trip_id: str | None) -> dict[str, object]:
-    return {**row, "trip_id": trip_id, "reason_code": reason_code}
+def _quarantine_row(row: Mapping[str, object], code: str) -> dict[str, object]:
+    return {**row, "reason_code": code}
 
 
 def transform_silver(
     bronze_rows: Sequence[Mapping[str, object]],
     zone_ids: set[int],
     *,
-    existing_trip_ids: set[str] | None = None,
+    existing_row_ids: set[str] | None = None,
 ) -> SilverBatch:
     """Validate, deduplicate, and derive Silver trip rows with quarantine reasons."""
-    seen_trip_ids = set(existing_trip_ids or set())
+    seen_row_ids = set(existing_row_ids or set())
     silver_rows: list[dict[str, object]] = []
     quarantine_rows: list[dict[str, object]] = []
 
     for row in bronze_rows:
-        reason = _reason_code(row, zone_ids)
-        trip_id: str | None = None
-        try:
-            trip_id = canonical_trip_id(row)
-        except SourceContractError:
-            reason = reason or "MISSING_TRIP_IDENTITY_FIELD"
-
-        if reason is None and trip_id in seen_trip_ids:
-            reason = "DUPLICATE_TRIP_ID"
+        reason = reason_code(row, zone_ids)
+        exact_row_id = str(row["row_id"])
+        if reason is None and exact_row_id in seen_row_ids:
+            reason = "DUPLICATE_ROW_ID"
         if reason is not None:
-            quarantine_rows.append(_quarantine_row(row, reason, trip_id))
+            quarantine_rows.append(_quarantine_row(row, reason))
             continue
 
-        assert trip_id is not None  # guarded by the identity-field validation above
-        seen_trip_ids.add(trip_id)
+        seen_row_ids.add(exact_row_id)
         pickup = _as_datetime(row["pickup_datetime"])
         dropoff = _as_datetime(row["dropoff_datetime"])
         assert pickup is not None and dropoff is not None
         silver_rows.append(
             {
-                "trip_id": trip_id,
+                "row_id": exact_row_id,
+                "business_trip_key": row["business_trip_key"],
+                "identity_policy_version": row["identity_policy_version"],
                 "operator_code": row["hvfhs_license_num"],
                 "request_datetime": row["request_datetime"],
                 "pickup_datetime": row["pickup_datetime"],
@@ -203,6 +179,11 @@ def transform_silver(
                 "driver_pay": float(row["driver_pay"]),
                 "shared_request_flag": row["shared_request_flag"],
                 "shared_match_flag": row["shared_match_flag"],
+                "cbd_congestion_fee": (
+                    None
+                    if row.get("cbd_congestion_fee") is None
+                    else float(row["cbd_congestion_fee"])
+                ),
                 "source_year": row["_source_year"],
                 "source_month": row["_source_month"],
                 "ingestion_run_id": row["_ingestion_run_id"],
@@ -217,7 +198,9 @@ def transform_silver(
 
 def reconcile(bronze: BronzeBatch, silver: SilverBatch) -> Reconciliation:
     """Return a count reconciliation and reject unexplained input rows."""
-    result = Reconciliation(len(bronze.rows), len(silver.silver_rows), len(silver.quarantine_rows))
+    result = Reconciliation(
+        len(bronze.rows), len(silver.silver_rows), len(silver.quarantine_rows)
+    )
     if not result.explained:
         raise SourceContractError(
             "Bronze reconciliation failed: every input row must be Silver or quarantine."

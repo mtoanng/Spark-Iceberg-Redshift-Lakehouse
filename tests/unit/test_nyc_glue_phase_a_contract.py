@@ -32,7 +32,9 @@ def test_bronze_is_month_scoped_and_uses_manifest_guarded_partition_replacement(
     assert "target.source_size_bytes <> source.source_size_bytes" in source
     assert "Changed source URI, checksum, or size was rejected." in source
     assert "publication_manifest_uri = CASE" in source
-    assert "target.run_status IN ('silver_published', 'reconciled', 'published')" in source
+    assert (
+        "target.run_status IN ('silver_published', 'reconciled', 'published')" in source
+    )
     assert 'boto3.client("s3").head_object' in source
     assert "actual_checksum != expected_checksum" in source
     assert "ContentLength" in source
@@ -41,9 +43,9 @@ def test_bronze_is_month_scoped_and_uses_manifest_guarded_partition_replacement(
 def test_ge_checkpoint_runs_before_silver_contract_and_persists_result() -> None:
     source = _job("nyc_great_expectations_checkpoint.py")
     assert "import great_expectations as gx" in source
-    assert "BASE_REQUIRED_TRIP_COLUMNS" in source
+    assert "required_identity_columns" in source
     assert 'manifest.run_status != "bronze_published"' in source
-    assert "batch.validate(expectation_suite=_suite())" in source
+    assert "batch.validate(expectation_suite=_suite(year))" in source
     assert "validation_result_summary" in source
     assert (
         "ge_blocked" in source
@@ -62,14 +64,14 @@ def test_silver_filters_one_run_requires_ge_and_overwrites_month_partition() -> 
     assert "StorageLevel.MEMORY_AND_DISK" in source
     assert "retrying_silver" in source
     assert 'failure_stage == "silver"' in source
-    assert "PICKUP_BEFORE_REQUEST" in source
+    assert "spark_reason_expression" in source
 
 
 def test_reconciliation_uses_correct_partition_columns_and_updates_manifest() -> None:
     source = _job("nyc_quality_checkpoint.py")
     assert 'manifest.run_status != "silver_published"' in source
-    assert 'manifest.validation_status != "passed"' in source
-    assert 'year_column = "_source_year" if bronze else "source_year"' in source
+    assert "bronze_vs_classified" in source
+    assert "gold_vs_silver" in source
     assert "run_status='reconciled'" in source
     assert "gold_row_count" in source
     assert "publication_status='pending'" in source
@@ -78,7 +80,13 @@ def test_reconciliation_uses_correct_partition_columns_and_updates_manifest() ->
 def test_publication_requires_reconciliation_and_writes_six_gold_tables() -> None:
     source = _job("nyc_publish_manifest.py")
     assert 'row.run_status != "reconciled"' in source
+    assert 'boto3.client("s3").put_object' in source
+    assert "snapshot_id" in source
     assert "publication_status" in source
+    assert "REQUIRED_GOLD_TABLES" in source
+    contract = (ROOT.parent / "publication" / "nyc_hvfhs.py").read_text(
+        encoding="utf-8"
+    )
     for table in (
         "dim_date",
         "dim_operator",
@@ -87,4 +95,4 @@ def test_publication_requires_reconciliation_and_writes_six_gold_tables() -> Non
         "mart_hourly_zone_demand",
         "mart_operator_metrics",
     ):
-        assert table in source
+        assert table in contract

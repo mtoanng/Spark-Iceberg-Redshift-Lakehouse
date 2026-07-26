@@ -7,7 +7,8 @@ from typing import Iterable, Mapping
 
 import great_expectations as gx
 
-from etl.sources.nyc_hvfhs import BASE_REQUIRED_TRIP_COLUMNS
+from etl.contracts.nyc_hvfhs_identity import required_identity_columns
+from etl.sources.nyc_hvfhs import required_trip_columns
 
 
 BLOCKING_EXPECTATION_NAMES = frozenset({"required_columns", "non_empty_batch"})
@@ -19,7 +20,7 @@ class GECheckpointResult:
     expectation_suite_name: str
 
 
-def expectation_suite() -> gx.ExpectationSuite:
+def expectation_suite(year: int = 2024) -> gx.ExpectationSuite:
     """Return the versioned suite used by the pre-Silver checkpoint.
 
     Schema and non-empty checks are promotion-blocking. Row-level business
@@ -27,14 +28,18 @@ def expectation_suite() -> gx.ExpectationSuite:
     """
     expectations = [
         gx.expectations.ExpectColumnToExist(column=name)
-        for name in sorted(BASE_REQUIRED_TRIP_COLUMNS)
+        for name in sorted(
+            required_trip_columns(year) | required_identity_columns(year)
+        )
     ]
     return gx.ExpectationSuite(
         name="nyc_hvfhs_bronze_pre_silver",
         expectations=expectations,
         meta={
             "blocking_expectations": sorted(BLOCKING_EXPECTATION_NAMES),
-            "quarantine_contract": "etl.transforms.nyc_hvfhs._reason_code",
+            "scope": "required_columns_non_empty_month_identity_inputs",
+            "row_validation_owner": "etl.contracts.nyc_hvfhs_quality.reason_code",
+            "source_year": year,
         },
     )
 
@@ -49,11 +54,11 @@ def evaluate_fixture_ge_checkpoint(
     Spark. Silver separately validates every row and preserves failures.
     """
     materialized = [dict(row) for row in rows]
+    year = int(materialized[0].get("_source_year", 2024)) if materialized else 2024
     present = set(materialized[0]) if materialized else set()
-    blocking_success = bool(materialized) and BASE_REQUIRED_TRIP_COLUMNS.issubset(
-        present
-    )
-    suite = expectation_suite()
+    structural_columns = required_trip_columns(year) | required_identity_columns(year)
+    blocking_success = bool(materialized) and structural_columns.issubset(present)
+    suite = expectation_suite(year)
     return GECheckpointResult(
         blocking_success, suite.name or "nyc_hvfhs_bronze_pre_silver"
     )

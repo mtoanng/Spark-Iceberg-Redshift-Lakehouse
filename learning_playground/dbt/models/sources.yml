@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Bronze tables created from the learner's Databricks Volume fixtures.
+    schema: lakehouse_learning
+    tables:
+      - name: bronze_nyc_trips
+        description: Persistent Bronze NYC HVFHV fixture table.
+      - name: bronze_taxi_zones
+        description: Persistent Bronze Taxi Zone lookup table.

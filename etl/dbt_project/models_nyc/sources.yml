@@ -17,9 +17,15 @@ sources:
     tables:
       - name: silver_trips
         columns:
-          - name: trip_id
+          - name: row_id
             data_tests:
               - unique
+              - not_null
+          - name: business_trip_key
+            data_tests:
+              - not_null
+          - name: identity_policy_version
+            data_tests:
               - not_null
           - name: pickup_datetime
             data_tests:

@@ -15,7 +15,7 @@ from etl.sources.nyc_hvfhs import (
     SourceFile,
     SourceManifestEntry,
     inspect_local_source,
-    canonical_trip_id,
+    canonical_row_id,
     manifest_decision,
     monthly_trip_uri,
     required_trip_columns,
@@ -62,7 +62,7 @@ def test_2024_fixture_is_source_shaped_and_contains_required_scenarios() -> None
     records = fixture["records"]
     assert len(records) == 5
     validate_trip_schema(records[0].keys(), fixture["source_year"])
-    assert canonical_trip_id(records[0]) == canonical_trip_id(records[1])  # duplicate
+    assert canonical_row_id(records[0], 2024) == canonical_row_id(records[1], 2024)
     assert records[2]["dropoff_datetime"] < records[2]["pickup_datetime"]
     assert records[3]["PULocationID"] == 999
     assert records[4]["driver_pay"] < 0
@@ -82,8 +82,12 @@ def test_schema_rejects_missing_required_column() -> None:
 
 
 def test_local_source_identity_and_run_id_are_deterministic() -> None:
-    source = inspect_local_source(FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1)
-    same_source = inspect_local_source(FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1)
+    source = inspect_local_source(
+        FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1
+    )
+    same_source = inspect_local_source(
+        FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1
+    )
     assert source.source_checksum == same_source.source_checksum
     assert source.source_size_bytes > 0
     assert stable_run_id(source) == stable_run_id(same_source)
@@ -124,19 +128,34 @@ def test_fixture_identity_is_pinned(
 
 
 def test_processed_identical_source_is_skipped_without_force() -> None:
-    source = inspect_local_source(FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1)
-    entry = SourceManifestEntry.discovered(source, datetime(2026, 1, 1, tzinfo=timezone.utc)).processed(
-        stable_run_id(source), datetime(2026, 1, 2, tzinfo=timezone.utc)
+    source = inspect_local_source(
+        FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1
     )
-    assert manifest_decision(entry, source) is ManifestAction.SKIP_IDENTICAL_PROCESSED_SOURCE
-    assert manifest_decision(entry, source, force=True) is ManifestAction.PROCESS_FORCED_RETRY
+    entry = SourceManifestEntry.discovered(
+        source, datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ).processed(stable_run_id(source), datetime(2026, 1, 2, tzinfo=timezone.utc))
+    assert (
+        manifest_decision(entry, source)
+        is ManifestAction.SKIP_IDENTICAL_PROCESSED_SOURCE
+    )
+    assert (
+        manifest_decision(entry, source, force=True)
+        is ManifestAction.PROCESS_FORCED_RETRY
+    )
 
 
 def test_changed_checksum_is_blocked_even_when_forced(tmp_path: Path) -> None:
     fixture_path = FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json"
-    original = inspect_local_source(fixture_path, 2024, 1, source_uri="fixture://2024-01")
+    original = inspect_local_source(
+        fixture_path, 2024, 1, source_uri="fixture://2024-01"
+    )
     entry = SourceManifestEntry.discovered(original).processed(stable_run_id(original))
     changed_path = tmp_path / fixture_path.name
     changed_path.write_bytes(fixture_path.read_bytes() + b"\nchanged")
-    changed = inspect_local_source(changed_path, 2024, 1, source_uri="fixture://2024-01")
-    assert manifest_decision(entry, changed, force=True) is ManifestAction.BLOCK_CHANGED_CHECKSUM
+    changed = inspect_local_source(
+        changed_path, 2024, 1, source_uri="fixture://2024-01"
+    )
+    assert (
+        manifest_decision(entry, changed, force=True)
+        is ManifestAction.BLOCK_CHANGED_CHECKSUM
+    )

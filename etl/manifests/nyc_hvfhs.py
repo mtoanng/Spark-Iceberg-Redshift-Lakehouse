@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 
+from etl.contracts.nyc_hvfhs_identity import identity_policy_version
 from etl.sources.nyc_hvfhs import SourceContractError, SourceFile, stable_run_id
 
 
@@ -20,6 +21,8 @@ class RunStatus(StrEnum):
     GE_PASSED = "ge_passed"
     GE_BLOCKED = "ge_blocked"
     SILVER_PUBLISHED = "silver_published"
+    RECONCILED = "reconciled"
+    PUBLISHED = "published"
     FAILED = "failed"
 
 
@@ -31,18 +34,26 @@ class SourceRunManifest:
     source_year: int
     source_month: int
     ingestion_run_id: str
+    identity_policy_version: str
     run_status: RunStatus
     first_seen_at: datetime
     updated_at: datetime
     bronze_row_count: int = 0
     silver_row_count: int = 0
     quarantine_row_count: int = 0
+    gold_row_count: int = 0
+    bronze_snapshot_id: str | None = None
+    silver_snapshot_id: str | None = None
+    quarantine_snapshot_id: str | None = None
     validation_status: str | None = None
     validation_result_uri: str | None = None
     validation_result_summary: str | None = None
     failure_stage: str | None = None
     failure_message: str | None = None
     completed_at: datetime | None = None
+    publication_status: str | None = None
+    publication_manifest_uri: str | None = None
+    published_at: datetime | None = None
 
     @classmethod
     def discovered(
@@ -56,6 +67,7 @@ class SourceRunManifest:
             source_year=source.source_year,
             source_month=source.source_month,
             ingestion_run_id=stable_run_id(source),
+            identity_policy_version=identity_policy_version(source.source_year),
             run_status=RunStatus.DISCOVERED,
             first_seen_at=now,
             updated_at=now,
@@ -129,6 +141,39 @@ class SourceRunManifest:
             completed_at=now,
         )
 
+    def reconciled(
+        self, gold_count: int, *, at: datetime | None = None
+    ) -> "SourceRunManifest":
+        if self.run_status is not RunStatus.SILVER_PUBLISHED:
+            raise SourceContractError("Gold reconciliation requires published Silver.")
+        if gold_count != self.silver_row_count:
+            raise SourceContractError(
+                "Gold fact rows must equal canonical Silver rows."
+            )
+        return self._transition(
+            RunStatus.RECONCILED,
+            at=at,
+            gold_row_count=gold_count,
+            publication_status="pending",
+        )
+
+    def published(
+        self, manifest_uri: str, *, at: datetime | None = None
+    ) -> "SourceRunManifest":
+        if self.run_status is not RunStatus.RECONCILED:
+            raise SourceContractError("Publication requires a reconciled run.")
+        if not manifest_uri:
+            raise SourceContractError("Publication requires a durable manifest URI.")
+        now = at or datetime.now(timezone.utc)
+        return self._transition(
+            RunStatus.PUBLISHED,
+            at=now,
+            publication_status="published",
+            publication_manifest_uri=manifest_uri,
+            published_at=now,
+            completed_at=now,
+        )
+
     def failed(
         self, stage: str, message: str, *, at: datetime | None = None
     ) -> "SourceRunManifest":
@@ -160,4 +205,9 @@ def retry_is_safe(
     )
     if not identity_matches:
         return False
-    return existing.run_status is not RunStatus.SILVER_PUBLISHED or force
+    canonical_complete = existing.run_status in {
+        RunStatus.SILVER_PUBLISHED,
+        RunStatus.RECONCILED,
+        RunStatus.PUBLISHED,
+    }
+    return not canonical_complete or force
