@@ -7,7 +7,12 @@ from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 
-from etl.iceberg.catalog import TABLE_SPECS, namespace_ddl, table_ddl
+from etl.iceberg.catalog import (
+    TABLE_SPECS,
+    namespace_ddl,
+    schema_evolution_ddl,
+    table_ddl,
+)
 
 
 args = getResolvedOptions(sys.argv, ["JOB_NAME", "WAREHOUSE_URI"])
@@ -36,6 +41,13 @@ def main() -> None:
             namespace_map[spec.namespace], spec.name, spec.columns, spec.partitioned_by
         )
         spark.sql(table_ddl(mapped, args["WAREHOUSE_URI"], catalog=catalog))
+    if _optional_arg("APPLY_2025_EVOLUTION", "false").lower() == "true":
+        for ddl in schema_evolution_ddl(
+            catalog=catalog,
+            bronze_database=namespace_map["bronze"],
+            silver_database=namespace_map["silver"],
+        ):
+            spark.sql(ddl)
 
     job.commit()
 

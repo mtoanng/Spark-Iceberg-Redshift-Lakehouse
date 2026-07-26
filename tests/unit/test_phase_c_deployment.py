@@ -42,7 +42,7 @@ def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
 def test_e2e_release_is_four_months_and_teardown_has_no_apply() -> None:
     assert len(command_plan(2024, 1)) == 4
     teardown = (ROOT / "scripts" / "teardown.ps1").read_text(encoding="utf-8").lower()
-    assert "terraform plan -destroy" in teardown
+    assert "'plan', '-destroy'" in teardown
     assert "terraform apply" not in teardown
 
 

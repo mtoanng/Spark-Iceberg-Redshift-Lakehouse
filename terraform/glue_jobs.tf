@@ -17,6 +17,7 @@ locals {
     "--OPS_DATABASE"                     = "ops"
     "--GOLD_DATABASE"                    = "gold"
     "--WAREHOUSE_URI"                    = "s3://${aws_s3_bucket.lakehouse.id}/${var.warehouse_prefix}"
+    "--PUBLICATION_PREFIX_URI"           = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
   }
 
 }

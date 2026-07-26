@@ -1,237 +1,61 @@
-# AGENTS.md — NYC High-Volume Ride-Hailing Lakehouse
+# AGENTS.md — NYC HVFHV snapshot-governed lakehouse
 
 ## Source of truth
 
-* Read `docs/PROJECT2_BLUEPRINT_FINAL.md` before editing.
-* The blueprint overrides obsolete Instacart, ML, recommendation, MongoDB, and unrestricted query documentation.
-* Report important conflicts before changing code.
-
-## Dataset Contract
-
-Required source dataset:
-
-NYC TLC High Volume For-Hire Vehicle Trip Records.
-
-Expected input:
-
-monthly HVFHV parquet files.
-
-Required source tables:
-
-- fhvhv_tripdata_YYYY-MM.parquet
-- taxi_zone_lookup.csv
-
-
-Do NOT use:
-
-- pre-aggregated trip summaries
-- dashboard datasets
-- ML feature datasets
-- cleaned star schemas
-- Kaggle transformed copies
-
-
-Bronze layer must preserve source-level records.
-
-## Delivery priority
-
-The priority order is:
-
-1. make Milestone A run for one month;
-2. complete Milestone B for the junior Definition of Done;
-3. implement Milestone C only when explicitly requested.
-
-Do not begin schema evolution, snapshot pinning, compaction, full-year backfills, or advanced maintenance before the one-month Bronze -> Silver -> Gold -> Athena path works.
-
-## Working mode
-
-* Implement exactly one blueprint phase per run.
-* Inspect relevant code, tests, and legacy paths before editing.
-* Prefer small, reviewable diffs.
-* Preserve the previous runnable path until the replacement passes.
-* Do not touch unrelated files.
-* Do not provision AWS resources without explicit user approval.
-
-# Repository Cleanup Rules
-
-Before implementing any new phase:
-
-1. Inspect existing code, docs, configs and infrastructure files.
-
-2. Identify:
-   - obsolete implementations
-   - previous dataset references
-   - outdated architecture documents
-   - unused dependencies
-   - dead code
-   - duplicate scripts
-   - deprecated Docker files
-
-3. Do not preserve old components only for historical reasons.
-
-4. If a previous implementation conflicts with the current blueprint:
-   - remove it,
-   - archive it,
-   - or replace it.
-
-5. Keep repository clean:
-   - no unused Java classes
-   - no abandoned notebooks
-   - no outdated README sections
-   - no obsolete diagrams
-   - no unused dependencies
-
-6. Every phase report must include:
-
-## Cleanup Report
-
-Removed:
-- file/path
-
-Archived:
-- file/path
-
-Kept:
-- file/path
-
-Reason:
-- why this artifact remains
-
-## Locked architecture
+Read `docs/PROJECT2_BLUEPRINT_FINAL.md` before editing. Active architecture:
 
 ```text
-Official NYC TLC HVFHV Parquet + Taxi Zone lookup
--> S3 Landing -> Airflow 3 -> Glue/PySpark Bronze
--> Iceberg Bronze -> mandatory Great Expectations checkpoint
--> Glue/PySpark Silver -> Iceberg Silver + quarantine
--> dbt-glue Gold -> publication manifest -> Amazon Athena
+immutable NYC TLC HVFHV month + Taxi Zones
+-> S3 landing -> Airflow 3 -> Glue 4.0/PySpark Bronze
+-> structural Great Expectations gate
+-> Glue 4.0/PySpark Silver + quarantine
+-> dbt-glue Gold -> reconciliation -> snapshot-aware publication
+-> bounded read-only Athena
 ```
 
-Rules:
+The current temporary EC2/instance-profile Airflow runner remains the deployment
+model for the first baseline. Do not add Cosmos, MWAA, EKS, Glue 5.1, Lake
+Formation, ML/AI, dashboards, another query engine, or an Iceberg maintenance
+suite.
 
-* Iceberg on S3 is canonical.
-* AWS Glue Data Catalog is the canonical catalog.
-* Athena is the bounded analytical serving layer; it is read-only for this project.
-* Great Expectations is a blocking contract checkpoint between Bronze and Silver.
-* Airflow orchestrates; transformation logic belongs in PySpark, dbt, or focused utilities.
-* Junior Gold is limited to three dimensions, one fact, and two marts.
-* Do not add ML, recommendation, MongoDB, PostgreSQL serving, ClickHouse, ScyllaDB, Redis, Elasticsearch, Trino, Kubernetes, dashboards, or unrestricted SQL endpoints.
-* Do not add weather, traffic, maps, demographics, or route optimization.
+## Locked semantics
 
-## Resource limits
+- Landing identity is URI + SHA-256 + byte size + year + month.
+- `row_id` is the exact-row SHA-256 and the only canonical dedup/merge key.
+- `business_trip_key` is a probable-trip analytical key and never silently
+  removes or quarantines rows.
+- `identity_policy_version` and ordered fields come only from
+  `etl/contracts/nyc_hvfhs_identity.py`.
+- Bronze is source-faithful plus ingestion and identity metadata.
+- Great Expectations blocks only on required year-specific columns, non-empty
+  month, and identity-policy inputs.
+- Silver owns row-level validation, exact deduplication, reason priority, and
+  quarantine.
+- Every Bronze row is classified exactly once:
+  `bronze_count = silver_count + quarantine_count`.
+- Gold remains exactly three dimensions, one fact, and two marts.
+- Publication writes a durable JSON artifact with counts, locations, and
+  snapshots before marking the run published.
+- Athena remains bounded and read-only.
 
-* The laptop must not run full Spark, Airflow Compose, or the AWS stack.
-* Use deterministic fixtures for local tests.
-* Use a disposable remote machine for DAG/dbt and small Spark integration tests.
-* Use AWS trials/credits only after code, tests, Terraform validation, smoke scripts, and teardown instructions are ready.
-* Start with one month, then four consecutive months; full 2024 is optional.
+## Delivery and safety
 
+Prove one immutable 2024 month before the existing four-month sequence. The
+only post-baseline Iceberg semantic is adding nullable
+`cbd_congestion_fee` for 2025, ingesting a new snapshot, and querying the old
+snapshot with Athena version travel.
 
+Do not commit source data, credentials, private URLs, account IDs, `.env`,
+Terraform state, or saved plans. Do not run `terraform apply` or incur AWS cost
+without separate approval. Preserve unrelated user changes.
 
-## Learning rule
+Run all credential-independent tests, Python formatting/lint/compile, dbt at
+the highest supported level, DAG topology checks, Terraform fmt/init/validate,
+packaging, secret scan, and documentation links. Mark live Glue, Airflow, S3,
+Iceberg snapshot, Athena, retry/clear/rerun, schema-evolution, and teardown
+evidence `NOT VERIFIED` until a retained AWS run exists.
 
-For each phase:
-
-1. identify one core decision the user must understand;
-2. let Codex implement boilerplate and tests;
-3. require the user to explain or manually verify that decision;
-4. end with three teach-back questions and one failure/rerun experiment.
-
-Core decisions include source grain, idempotency key, Bronze/Silver boundaries, Great Expectations blocking behavior, quarantine, fact grain, Iceberg role, Airflow rerun semantics, publication manifests, and Athena's bounded serving role.
-
-Do not block all implementation waiting for the user; clearly mark the single student learning task for the phase.
-
-## Phase Gate Rule
-
-A phase cannot start if previous phase report contains:
-
-- NOT SATISFIED
-- NOT VERIFIED
-- FAILED
-
-unless the user explicitly overrides.(Learning can be saved for later)
-
-## Verification
-
-* Predict expected behavior before important tests.
-* Run all credential-independent checks relevant to the diff.
-* Report exact commands and concise results.
-* Mark AWS, Glue, Airflow deployment, idempotency, schema evolution, snapshot pinning, performance, and recovery claims `NOT VERIFIED` until evidence exists.
-* Never fabricate source counts, snapshots, query plans, costs, logs, or cloud resources.
-
-Typical checks:
-
-* Python/unit/fixture tests;
-* Silver validation and reconciliation tests;
-* Airflow 3 DAG import test;
-* dbt parse/compile/build at the available level;
-* one quality checkpoint on fixtures;
-* Great Expectations checkpoint contract tests;
-* Athena SQL and Boto3 runner contract tests;
-* idempotent rerun test;
-* Terraform `fmt -check` and `validate`.
-
-## Data and security
-
-* Do not commit NYC TLC monthly source files.
-* Commit only small deterministic fixtures.
-* Preserve source-faithful Bronze columns plus ingestion metadata.
-* Invalid rows go to quarantine with reason codes; do not silently drop them.
-* Keep README and diagrams aligned with implemented reality.
-* Never commit AWS credentials, secrets, account IDs, private URLs, `.env`, or Terraform state.
-* Do not claim `production-ready`, `deployed`, `idempotent`, `schema-evolved`, or `snapshot-pinned` without evidence.
-
-## Required run report
-
-End every run with:
-
-1. phase implemented;
-2. files changed;
-3. commands and results;
-4. verified acceptance criteria;
-5. `NOT VERIFIED` items;
-6. blockers and risks;
-7. the student learning task;
-8. three teach-back questions;
-9. confirmation that no later phase was started.
-
-
-
-# Final Release Gates
-
-The project is not complete when individual implementation phases pass.
-
-After all implementation phases, the agent must complete:
-
-1. Final End-to-End Release Verification
-2. Deployment and Operational Handover
-
-A release must not be tagged as complete while the core execution path contains:
-
-- NOT VERIFIED
-- NOT SATISFIED
-- FAILED
-- SKIPPED without an approved reason
-
-## End-to-End Rules
-
-- Test the complete data path, not isolated components.
-- Use deterministic bounded input.
-- Reconcile input, accepted, rejected, and output records.
-- Validate business results using an independent computation.
-- Verify retry or recovery behavior.
-- Store evidence under docs/evidence/final-e2e/.
-- Do not claim exactly-once behavior without supporting evidence.
-- Do not claim production readiness.
-
-## Deployment Rules
-
-- Provide local-smoke and cloud-demo profiles.
-- Do not add new infrastructure technologies.
-- Document prerequisites, secrets, deployment, verification,
-  rollback, troubleshooting, and teardown.
-- Deployment must be reproducible from a fresh environment.
-- Secrets must never be committed.
-- Cloud deployment is VERIFIED only after a real successful run.
-- A successful Terraform plan is not proof of deployment.
-- A service starting is not proof that the data pipeline works.
+End work with baseline failures, decisions, files, cleanup, exact commands,
+PASS/FAIL/NOT VERIFIED criteria, identity/rerun/publication evidence, remaining
+risks, verification boundary, the learning task, and three teach-back
+questions.

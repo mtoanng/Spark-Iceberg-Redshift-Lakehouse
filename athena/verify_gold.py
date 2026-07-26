@@ -15,16 +15,28 @@ from athena.query_runner import AthenaQueryError, AthenaQueryRunner
 @dataclass(frozen=True)
 class GoldSmokeResult:
     query_execution_id: str
+    database: str
+    workgroup: str
+    result_location: str | None
+    execution_state: str
     data_scanned_bytes: int
+    engine_execution_time_ms: int
     row_count: int
-    distinct_trip_count: int
+    distinct_row_count: int
 
 
 EXPECTED_GOLD_COLUMNS = {
     "dim_date": {"date_key", "calendar_date"},
     "dim_operator": {"operator_code"},
     "dim_zone": {"zone_id", "zone_name"},
-    "fct_trips": {"trip_id", "source_year", "source_month", "pickup_datetime"},
+    "fct_trips": {
+        "row_id",
+        "business_trip_key",
+        "identity_policy_version",
+        "source_year",
+        "source_month",
+        "pickup_datetime",
+    },
     "mart_hourly_zone_demand": {"hourly_zone_key", "trip_count"},
     "mart_operator_metrics": {"operator_month_key", "trip_count"},
 }
@@ -38,7 +50,8 @@ def verify_gold_catalog(glue_client: Any, *, database: str) -> None:
     missing_tables = set(EXPECTED_GOLD_COLUMNS) - actual_names
     if missing_tables:
         raise AthenaQueryError(
-            "Gold catalog is missing expected tables: " + ", ".join(sorted(missing_tables))
+            "Gold catalog is missing expected tables: "
+            + ", ".join(sorted(missing_tables))
         )
     unexpected_tables = actual_names - set(EXPECTED_GOLD_COLUMNS)
     if unexpected_tables:
@@ -70,6 +83,7 @@ def verify_gold_smoke(
     catalog: str = "AwsDataCatalog",
     glue_client: Any | None = None,
     max_scanned_bytes: int = 104_857_600,
+    expected_row_count: int | None = None,
 ) -> GoldSmokeResult:
     if not 2019 <= year <= 2099 or not 1 <= month <= 12:
         raise ValueError("year/month are outside the HVFHV source contract.")
@@ -90,10 +104,14 @@ def verify_gold_smoke(
         raise AthenaQueryError("Gold smoke query returned an unexpected result shape.")
     values = dict(zip(result.columns, result.rows[0], strict=True))
     row_count = int(values["row_count"] or 0)
-    distinct_trip_count = int(values["distinct_trip_count"] or 0)
-    if row_count <= 0 or row_count != distinct_trip_count:
+    distinct_row_count = int(values["distinct_row_count"] or 0)
+    if row_count <= 0 or row_count != distinct_row_count:
         raise AthenaQueryError(
-            "Gold smoke failed: fct_trips is empty or trip_id is not unique."
+            "Gold smoke failed: fct_trips is empty or row_id is not unique."
+        )
+    if expected_row_count is not None and row_count != expected_row_count:
+        raise AthenaQueryError(
+            f"Gold smoke count {row_count} does not match publication {expected_row_count}."
         )
     if not values.get("min_pickup_datetime") or not values.get("max_dropoff_datetime"):
         raise AthenaQueryError("Gold smoke failed: required timestamp bounds are null.")
@@ -104,9 +122,14 @@ def verify_gold_smoke(
         )
     return GoldSmokeResult(
         result.query_execution_id,
+        result.database or database,
+        result.workgroup or workgroup,
+        result.result_location,
+        result.execution_state,
         result.data_scanned_bytes,
+        result.engine_execution_time_ms,
         row_count,
-        distinct_trip_count,
+        distinct_row_count,
     )
 
 
@@ -133,7 +156,10 @@ def main() -> None:
         max_scanned_bytes=args.max_scanned_bytes,
     )
     print(
-        f"PASS query_id={outcome.query_execution_id} scanned_bytes={outcome.data_scanned_bytes}"
+        f"PASS query_id={outcome.query_execution_id} state={outcome.execution_state} "
+        f"database={outcome.database} workgroup={outcome.workgroup} "
+        f"result_location={outcome.result_location} scanned_bytes={outcome.data_scanned_bytes} "
+        f"engine_ms={outcome.engine_execution_time_ms}"
     )
 
 

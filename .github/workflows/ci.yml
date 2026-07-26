@@ -53,7 +53,7 @@ jobs:
         env:
           GLUE_ROLE_ARN: arn:aws:iam::000000000000:role/ci-not-used
           S3_GOLD_PATH: s3://ci-not-used/warehouse/gold
-        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target ci --no-partial-parse && dbt compile --profiles-dir . --target ci --no-partial-parse --no-introspect
+        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target ci --no-partial-parse && dbt compile --profiles-dir . --target ci --no-partial-parse
 
   terraform:
     name: Terraform format and validation

@@ -62,7 +62,7 @@ def test_quality_checkpoint_accepts_reconciled_fixture() -> None:
         result.bronze_count,
         result.silver_count,
         result.quarantine_count,
-        result.distinct_trip_count,
+        result.distinct_row_count,
     ) == (5, 1, 4, 1)
 
 

@@ -144,11 +144,19 @@ with DAG(
     dbt_build = BashOperator(
         task_id="dbt_build",
         bash_command=(
+            "set -euo pipefail; "
             "cd {{ var.value.nyc_project_root }}/etl/dbt_project && "
             "dbt build --profiles-dir . --target glue "
-            "--vars '{\"source_year\": {{ ti.xcom_pull(task_ids=\"prepare_month\")[\"source_year\"] }}, "
-            "\"source_month\": {{ ti.xcom_pull(task_ids=\"prepare_month\")[\"source_month\"] }}}'"
+            '--vars \'{"source_year": {{ ti.xcom_pull(task_ids="prepare_month")["source_year"] }}, '
+            '"source_month": {{ ti.xcom_pull(task_ids="prepare_month")["source_month"] }}}\' && '
+            'DBT_RESULT_URI="{{ var.value.nyc_publication_prefix_uri }}/dbt-results/'
+            "year={{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}/"
+            "month={{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}/"
+            "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}.json\"; "
+            'aws s3 cp target/run_results.json "$DBT_RESULT_URI" >/dev/null; '
+            'printf "%s" "$DBT_RESULT_URI"'
         ),
+        do_xcom_push=True,
     )
 
     reconciliation = GlueJobOperator(
@@ -157,6 +165,7 @@ with DAG(
         script_args={
             "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
             "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
         },
         aws_conn_id=None,
         wait_for_completion=True,
@@ -170,6 +179,7 @@ with DAG(
             "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
             "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
             "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            "--DBT_RESULT_URI": "{{ ti.xcom_pull(task_ids='dbt_build') }}",
         },
         aws_conn_id=None,
         wait_for_completion=True,
@@ -229,7 +239,10 @@ with DAG(
     render_template_as_native_obj=True,
     tags=["nyc", "hvfhs", "iceberg", "manual", "backfill"],
 ) as nyc_hvfhs_four_month_backfill_dag:
-    def _prepare_backfill(year: int, month: int, force: bool) -> list[dict[str, object]]:
+
+    def _prepare_backfill(
+        year: int, month: int, force: bool
+    ) -> list[dict[str, object]]:
         return [
             {"year": request.year, "month": request.month, "force": request.force}
             for request in sequential_backfill_requests(
@@ -272,7 +285,13 @@ with DAG(
         wait_for_completion=True,
     )
 
-    prepare_backfill >> trigger_month_1 >> trigger_month_2 >> trigger_month_3 >> trigger_month_4
+    (
+        prepare_backfill
+        >> trigger_month_1
+        >> trigger_month_2
+        >> trigger_month_3
+        >> trigger_month_4
+    )
 
 
 nyc_hvfhs_monthly_dag.doc_md = """

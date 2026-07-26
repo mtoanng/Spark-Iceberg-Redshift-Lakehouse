@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_nyc_trips
+    description: Typed rows from the Databricks Bronze table.
+    columns:
+      - name: source_trip_id
+        tests: [not_null]
+  - name: stg_taxi_zones
+    description: Databricks Bronze Taxi Zone lookup.
+    columns:
+      - name: zone_id
+        tests: [not_null, unique]
+  - name: int_valid_trips
+    description: Rows that pass the shared validation rules.
+  - name: int_deduplicated_trips
+    description: One canonical row per deterministic row_id.
+    columns:
+      - name: row_id
+        tests: [not_null, unique]
+  - name: fct_trips
+    description: Canonical valid-and-deduplicated trip fact.
+    columns:
+      - name: row_id
+        tests: [not_null, unique]
+      - name: pickup_zone_id
+        tests: [not_null]
+  - name: mart_hourly_zone_demand
+    description: Hourly demand and fare by pickup zone.

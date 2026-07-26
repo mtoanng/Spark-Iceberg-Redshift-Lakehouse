@@ -10,7 +10,8 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from pyspark.sql.functions import col
 
-from etl.sources.nyc_hvfhs import BASE_REQUIRED_TRIP_COLUMNS
+from etl.contracts.nyc_hvfhs_identity import required_identity_columns
+from etl.sources.nyc_hvfhs import required_trip_columns
 
 
 args = getResolvedOptions(
@@ -31,12 +32,13 @@ BRONZE_TRIPS_TABLE = _table("bronze", "bronze_hvfhs_trips")
 MANIFEST_TABLE = _table("ops", "source_run_manifest")
 
 
-def _suite() -> gx.ExpectationSuite:
+def _suite(year: int) -> gx.ExpectationSuite:
+    required = required_trip_columns(year) | required_identity_columns(year)
     return gx.ExpectationSuite(
         name="nyc_hvfhs_bronze_pre_silver",
         expectations=[
             gx.expectations.ExpectColumnToExist(column=name)
-            for name in sorted(BASE_REQUIRED_TRIP_COLUMNS)
+            for name in sorted(required)
         ],
     )
 
@@ -83,14 +85,14 @@ def main() -> None:
     batch = asset.add_batch_definition_whole_dataframe("month").get_batch(
         batch_parameters={"dataframe": bronze}
     )
-    validation = batch.validate(expectation_suite=_suite())
+    validation = batch.validate(expectation_suite=_suite(year))
     blocking_success = bool(validation.success) and bronze.limit(1).count() == 1
     summary = json.dumps(
         {
             "suite": "nyc_hvfhs_bronze_pre_silver",
             "gx_success": bool(validation.success),
             "blocking_success": blocking_success,
-            "scope": "required_columns_and_non_empty_month",
+            "scope": "required_columns_non_empty_month_identity_inputs",
         },
         sort_keys=True,
     )

@@ -17,9 +17,16 @@ import re
 from typing import Iterable, Mapping
 from urllib.parse import urlparse
 
+from etl.contracts.nyc_hvfhs_identity import (
+    business_trip_key,
+    required_identity_columns,
+    row_id,
+)
 
 NYC_TLC_TRIP_DATA_BASE_URI = "https://d37ci6vzurychx.cloudfront.net/trip-data"
-NYC_TLC_TAXI_ZONE_URI = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+NYC_TLC_TAXI_ZONE_URI = (
+    "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+)
 DEFAULT_SOURCE_YEAR = 2024
 DEFAULT_SOURCE_MONTH = 1
 
@@ -48,22 +55,6 @@ BASE_REQUIRED_TRIP_COLUMNS = frozenset(
     }
 )
 CBD_CONGESTION_FEE_COLUMN = "cbd_congestion_fee"
-
-# The fingerprint represents a source trip. It intentionally contains no
-# derived Silver fields and no ingestion metadata.
-TRIP_IDENTITY_COLUMNS = (
-    "hvfhs_license_num",
-    "dispatching_base_num",
-    "request_datetime",
-    "pickup_datetime",
-    "dropoff_datetime",
-    "PULocationID",
-    "DOLocationID",
-    "trip_miles",
-    "trip_time",
-    "base_passenger_fare",
-    "driver_pay",
-)
 
 
 class SourceContractError(ValueError):
@@ -108,7 +99,9 @@ class SourceManifestEntry:
     ingestion_run_id: str | None
 
     @classmethod
-    def discovered(cls, source: SourceFile, seen_at: datetime | None = None) -> "SourceManifestEntry":
+    def discovered(
+        cls, source: SourceFile, seen_at: datetime | None = None
+    ) -> "SourceManifestEntry":
         return cls(
             source_year=source.source_year,
             source_month=source.source_month,
@@ -121,9 +114,13 @@ class SourceManifestEntry:
             ingestion_run_id=None,
         )
 
-    def processed(self, run_id: str, processed_at: datetime | None = None) -> "SourceManifestEntry":
+    def processed(
+        self, run_id: str, processed_at: datetime | None = None
+    ) -> "SourceManifestEntry":
         if not run_id:
-            raise SourceContractError("A processed source requires an ingestion_run_id.")
+            raise SourceContractError(
+                "A processed source requires an ingestion_run_id."
+            )
         return SourceManifestEntry(
             source_year=self.source_year,
             source_month=self.source_month,
@@ -161,12 +158,18 @@ def validate_landed_source(source: SourceFile) -> None:
     _validate_year_month(source.source_year, source.source_month)
     parsed = urlparse(source.source_uri)
     expected_name = monthly_trip_filename(source.source_year, source.source_month)
-    if parsed.scheme != "s3" or not parsed.netloc or Path(parsed.path).name != expected_name:
+    if (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or Path(parsed.path).name != expected_name
+    ):
         raise SourceContractError(
             f"landed source must be an s3:// URI ending in {expected_name}."
         )
     if not re.fullmatch(r"[0-9a-fA-F]{64}", source.source_checksum):
-        raise SourceContractError("landed source checksum must be a SHA-256 hex digest.")
+        raise SourceContractError(
+            "landed source checksum must be a SHA-256 hex digest."
+        )
     if source.source_size_bytes <= 0:
         raise SourceContractError("landed source size must be greater than zero bytes.")
 
@@ -175,9 +178,10 @@ def required_trip_columns(year: int) -> frozenset[str]:
     """Return required source columns; 2025+ requires congestion-fee support."""
     if year < 2019:
         raise SourceContractError("HVFHV source files are supported from 2019 onward.")
+    required = BASE_REQUIRED_TRIP_COLUMNS | required_identity_columns(year)
     if year >= 2025:
-        return BASE_REQUIRED_TRIP_COLUMNS | {CBD_CONGESTION_FEE_COLUMN}
-    return BASE_REQUIRED_TRIP_COLUMNS
+        return required | {CBD_CONGESTION_FEE_COLUMN}
+    return required
 
 
 def validate_trip_schema(columns: Iterable[str], year: int) -> None:
@@ -185,10 +189,14 @@ def validate_trip_schema(columns: Iterable[str], year: int) -> None:
     present = set(columns)
     missing = sorted(required_trip_columns(year) - present)
     if missing:
-        raise SourceContractError(f"Missing required HVFHV source columns: {', '.join(missing)}")
+        raise SourceContractError(
+            f"Missing required HVFHV source columns: {', '.join(missing)}"
+        )
 
 
-def inspect_local_source(path: Path, year: int, month: int, source_uri: str | None = None) -> SourceFile:
+def inspect_local_source(
+    path: Path, year: int, month: int, source_uri: str | None = None
+) -> SourceFile:
     """Calculate immutable local source identity without interpreting its contents."""
     _validate_year_month(year, month)
     if not path.is_file():
@@ -208,13 +216,22 @@ def inspect_local_source(path: Path, year: int, month: int, source_uri: str | No
     )
 
 
-def canonical_trip_id(record: Mapping[str, object]) -> str:
-    """Produce a stable SHA-256 trip identifier from source-level fields only."""
-    missing = [column for column in TRIP_IDENTITY_COLUMNS if column not in record]
-    if missing:
-        raise SourceContractError(f"Cannot build trip_id; missing identity columns: {', '.join(missing)}")
-    values = ("" if record[column] is None else str(record[column]).strip() for column in TRIP_IDENTITY_COLUMNS)
-    return sha256("\x1f".join(values).encode("utf-8")).hexdigest()
+def canonical_row_id(record: Mapping[str, object], year: int) -> str:
+    """Produce the policy-versioned exact-row identity."""
+
+    try:
+        return row_id(record, year)
+    except ValueError as error:
+        raise SourceContractError(str(error)) from error
+
+
+def canonical_business_trip_key(record: Mapping[str, object]) -> str:
+    """Produce the probable-trip analytical key; never use it for deduplication."""
+
+    try:
+        return business_trip_key(record)
+    except ValueError as error:
+        raise SourceContractError(str(error)) from error
 
 
 def stable_run_id(source: SourceFile) -> str:
@@ -245,5 +262,9 @@ def manifest_decision(
     if not same_location or existing.source_checksum != candidate.source_checksum:
         return ManifestAction.BLOCK_CHANGED_CHECKSUM
     if existing.status is SourceStatus.PROCESSED:
-        return ManifestAction.PROCESS_FORCED_RETRY if force else ManifestAction.SKIP_IDENTICAL_PROCESSED_SOURCE
+        return (
+            ManifestAction.PROCESS_FORCED_RETRY
+            if force
+            else ManifestAction.SKIP_IDENTICAL_PROCESSED_SOURCE
+        )
     return ManifestAction.PROCESS_NEW

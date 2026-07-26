@@ -1,0 +1,1 @@
+"""Snapshot-aware publication contracts."""

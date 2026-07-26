@@ -10,18 +10,17 @@ from pyspark.sql import Window
 from pyspark.storagelevel import StorageLevel
 from pyspark.sql.functions import (
     col,
-    concat_ws,
-    coalesce,
     count,
     hour,
     lit,
     row_number,
-    sha2,
     sum as spark_sum,
     to_date,
     when,
 )
 
+from etl.contracts.nyc_hvfhs_identity import identity_policy_version
+from etl.contracts.nyc_hvfhs_quality import spark_reason_expression
 
 args = getResolvedOptions(
     sys.argv, ["JOB_NAME", "SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"]
@@ -47,33 +46,12 @@ SILVER_TRIPS_TABLE, QUARANTINE_TABLE, MANIFEST_TABLE = (
 )
 
 
-def _fingerprint():
-    columns = (
-        "hvfhs_license_num",
-        "dispatching_base_num",
-        "request_datetime",
-        "pickup_datetime",
-        "dropoff_datetime",
-        "PULocationID",
-        "DOLocationID",
-        "trip_miles",
-        "trip_time",
-        "base_passenger_fare",
-        "driver_pay",
-    )
-    return sha2(
-        concat_ws(
-            "\u001f", *[coalesce(col(name).cast("string"), lit("")) for name in columns]
-        ),
-        256,
-    )
-
-
 def main() -> None:
     glue_context = GlueContext(SparkContext.getOrCreate())
     job = Job(glue_context)
     job.init(args["JOB_NAME"], args)
     spark = glue_context.spark_session
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
     year, month, run_id = (
         int(args["SOURCE_YEAR"]),
         int(args["SOURCE_MONTH"]),
@@ -92,15 +70,20 @@ def main() -> None:
             "Silver publication is blocked until the Great Expectations gate passes for this run."
         )
     try:
-        trips = (
-            spark.table(BRONZE_TRIPS_TABLE)
-            .filter(
-                (col("_source_year") == year)
-                & (col("_source_month") == month)
-                & (col("_ingestion_run_id") == run_id)
-            )
-            .withColumn("trip_id", _fingerprint())
+        trips = spark.table(BRONZE_TRIPS_TABLE).filter(
+            (col("_source_year") == year)
+            & (col("_source_month") == month)
+            & (col("_ingestion_run_id") == run_id)
         )
+        expected_policy = identity_policy_version(year)
+        if (
+            trips.filter(col("identity_policy_version") != expected_policy)
+            .limit(1)
+            .count()
+        ):
+            raise ValueError(
+                "Bronze identity policy does not match the requested source year."
+            )
         zones = (
             spark.table(BRONZE_ZONES_TABLE)
             .filter((col("_source_year") == year) & (col("_source_month") == month))
@@ -110,7 +93,7 @@ def main() -> None:
         other_ids = (
             spark.table(SILVER_TRIPS_TABLE)
             .filter(~((col("source_year") == year) & (col("source_month") == month)))
-            .select("trip_id")
+            .select("row_id")
             .distinct()
             .withColumn("_already_published", lit(True))
         )
@@ -125,48 +108,15 @@ def main() -> None:
                 col("DOLocationID") == col("dropoff_zone_id"),
                 "left",
             )
-            .join(other_ids, "trip_id", "left")
+            .join(other_ids, "row_id", "left")
         )
-        reasoned = joined.withColumn(
-            "reason_code",
-            when(
-                col("request_datetime").isNull()
-                | col("pickup_datetime").isNull()
-                | col("dropoff_datetime").isNull(),
-                "MISSING_OR_INVALID_TIMESTAMP",
-            )
-            .when(
-                col("pickup_datetime") < col("request_datetime"),
-                "PICKUP_BEFORE_REQUEST",
-            )
-            .when(
-                col("dropoff_datetime") < col("pickup_datetime"),
-                "DROPOFF_BEFORE_PICKUP",
-            )
-            .when(col("pickup_zone_id").isNull(), "UNKNOWN_PICKUP_ZONE")
-            .when(col("dropoff_zone_id").isNull(), "UNKNOWN_DROPOFF_ZONE")
-            .when(
-                col("trip_miles").isNull()
-                | col("trip_time").isNull()
-                | col("base_passenger_fare").isNull()
-                | col("tolls").isNull()
-                | col("sales_tax").isNull()
-                | col("tips").isNull()
-                | col("driver_pay").isNull(),
-                "MISSING_OR_INVALID_NUMERIC",
-            )
-            .when(col("trip_miles") < 0, "NEGATIVE_TRIP_MILES")
-            .when(col("trip_time") < 0, "NEGATIVE_TRIP_TIME")
-            .when(col("base_passenger_fare") < 0, "NEGATIVE_PASSENGER_FARE")
-            .when(col("tolls") < 0, "NEGATIVE_TOLLS")
-            .when(col("sales_tax") < 0, "NEGATIVE_SALES_TAX")
-            .when(col("tips") < 0, "NEGATIVE_TIPS")
-            .when(col("driver_pay") < 0, "NEGATIVE_DRIVER_PAY"),
-        )
+        reasoned = joined.withColumn("reason_code", spark_reason_expression())
         numbered = reasoned.withColumn(
             "_trip_row_number",
             row_number().over(
-                Window.partitionBy("trip_id").orderBy(col("_ingested_at"))
+                Window.partitionBy("row_id").orderBy(
+                    col("_source_file"), col("_ingested_at")
+                )
             ),
         )
         classified = numbered.withColumn(
@@ -177,7 +127,7 @@ def main() -> None:
                     (col("_trip_row_number") > 1)
                     | col("_already_published").isNotNull()
                 ),
-                "DUPLICATE_TRIP_ID",
+                "DUPLICATE_ROW_ID",
             ).otherwise(col("reason_code")),
         )
         classified.persist(StorageLevel.MEMORY_AND_DISK)
@@ -185,7 +135,9 @@ def main() -> None:
             "_trip_row_number", "_already_published"
         )
         silver = classified.filter(col("reason_code").isNull()).select(
-            "trip_id",
+            "row_id",
+            "business_trip_key",
+            "identity_policy_version",
             col("hvfhs_license_num").alias("operator_code"),
             "request_datetime",
             "pickup_datetime",
@@ -214,6 +166,10 @@ def main() -> None:
             to_date("pickup_datetime").alias("pickup_date"),
             hour("pickup_datetime").alias("pickup_hour"),
         )
+        if "cbd_congestion_fee" in trips.columns:
+            silver = silver.withColumn(
+                "cbd_congestion_fee", col("cbd_congestion_fee").cast("double")
+            )
         counts = classified.agg(
             count(lit(1)).alias("bronze_count"),
             spark_sum(when(col("reason_code").isNull(), 1).otherwise(0)).alias(
@@ -229,8 +185,20 @@ def main() -> None:
             )
         silver.writeTo(SILVER_TRIPS_TABLE).overwritePartitions()
         quarantine.writeTo(QUARANTINE_TABLE).overwritePartitions()
+        silver_snapshot = spark.sql(
+            f"SELECT snapshot_id FROM {SILVER_TRIPS_TABLE}.snapshots "
+            "ORDER BY committed_at DESC LIMIT 1"
+        ).first()
+        quarantine_snapshot = spark.sql(
+            f"SELECT snapshot_id FROM {QUARANTINE_TABLE}.snapshots "
+            "ORDER BY committed_at DESC LIMIT 1"
+        ).first()
         spark.sql(
-            f"UPDATE {MANIFEST_TABLE} SET run_status='silver_published', silver_row_count={silver_count}, quarantine_row_count={quarantine_count}, completed_at=current_timestamp(), updated_at=current_timestamp(), failure_stage=NULL, failure_message=NULL WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
+            f"UPDATE {MANIFEST_TABLE} SET run_status='silver_published', silver_row_count={silver_count}, "
+            f"quarantine_row_count={quarantine_count}, silver_snapshot_id='{silver_snapshot.snapshot_id}', "
+            f"quarantine_snapshot_id='{quarantine_snapshot.snapshot_id}', completed_at=current_timestamp(), "
+            f"updated_at=current_timestamp(), failure_stage=NULL, failure_message=NULL "
+            f"WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
         )
         classified.unpersist()
         job.commit()

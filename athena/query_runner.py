@@ -21,6 +21,9 @@ class AthenaQueryResult:
     data_scanned_bytes: int
     engine_execution_time_ms: int
     result_location: str | None
+    database: str = ""
+    workgroup: str = ""
+    execution_state: str = "SUCCEEDED"
 
 
 class AthenaQueryRunner:
@@ -71,7 +74,12 @@ class AthenaQueryRunner:
             status = execution["Status"]
             state = status["State"]
             if state == "SUCCEEDED":
-                return self._results(query_execution_id, execution)
+                return self._results(
+                    query_execution_id,
+                    execution,
+                    database=database,
+                    workgroup=workgroup,
+                )
             if state in {"FAILED", "CANCELLED"}:
                 reason = status.get(
                     "StateChangeReason", "No Athena state reason supplied."
@@ -87,7 +95,12 @@ class AthenaQueryRunner:
             self._sleep(poll_interval_seconds)
 
     def _results(
-        self, query_execution_id: str, execution: dict[str, Any]
+        self,
+        query_execution_id: str,
+        execution: dict[str, Any],
+        *,
+        database: str,
+        workgroup: str,
     ) -> AthenaQueryResult:
         columns: tuple[str, ...] = ()
         rows: list[tuple[str | None, ...]] = []
@@ -127,4 +140,7 @@ class AthenaQueryRunner:
                 statistics.get("EngineExecutionTimeInMillis", 0)
             ),
             result_location=configuration.get("OutputLocation"),
+            database=database,
+            workgroup=workgroup,
+            execution_state="SUCCEEDED",
         )

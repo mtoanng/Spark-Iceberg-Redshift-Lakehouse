@@ -56,6 +56,9 @@ def test_runner_forwards_token_and_execution_parameters_and_paginates() -> None:
 
     assert result.rows == (("first",), ("second",))
     assert result.data_scanned_bytes == 123
+    assert result.database == "gold"
+    assert result.workgroup == "wg"
+    assert result.execution_state == "SUCCEEDED"
     assert (
         client.start_query_execution.call_args.kwargs["ClientRequestToken"]
         == "stable-token"
