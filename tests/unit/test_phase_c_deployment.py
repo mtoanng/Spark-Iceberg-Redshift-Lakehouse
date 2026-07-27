@@ -26,7 +26,7 @@ def test_spark_package_is_deterministic_and_contains_runtime_contract(
         manifest = json.loads(archive.read("spark_runtime_manifest.json"))
         assert "etl/iceberg/catalog.py" in archive.namelist()
         assert "etl/spark_jobs/nyc_bronze_ingestion.py" in archive.namelist()
-        assert manifest["namespaces"] == ["bronze", "silver", "ops", "gold"]
+        assert manifest["namespaces"] == ["bronze", "silver", "ops"]
 
 
 def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
@@ -49,6 +49,9 @@ def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
     assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS bronze_external" in terraform
     assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS silver_external" in terraform
     assert "CREATE SCHEMA IF NOT EXISTS gold" in terraform
+    assert "nyc_great_expectations_checkpoint.py" not in terraform
+    assert "nyc_quality_checkpoint.py" not in terraform
+    assert "nyc_publish_manifest.py" not in terraform
 
 
 def test_e2e_release_is_four_months_and_teardown_has_no_apply() -> None:
@@ -64,6 +67,7 @@ def test_cloud_environment_has_no_static_key_contract() -> None:
     assert "AWS_SECRET_ACCESS_KEY" not in env
     assert "ATHENA_WORKGROUP" in env
     assert "AIRFLOW_VAR_NYC_EMR_SERVERLESS_APPLICATION_ID" in env
+    assert "AIRFLOW_VAR_REDSHIFT_WORKGROUP_NAME" in env
 
 
 def test_airflow_runtime_pins_cosmos_for_the_dbt_task_group() -> None:

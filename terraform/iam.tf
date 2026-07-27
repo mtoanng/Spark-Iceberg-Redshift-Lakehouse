@@ -72,8 +72,8 @@ resource "aws_iam_role_policy" "emr_serverless_lakehouse" {
   })
 }
 
-resource "aws_iam_role_policy" "athena_gold_query" {
-  name = "${var.project_name}-${var.environment}-athena-gold-query"
+resource "aws_iam_role_policy" "athena_iceberg_verify" {
+  name = "${var.project_name}-${var.environment}-athena-iceberg-verify"
   role = aws_iam_role.airflow_runner.id
 
   policy = jsonencode({
@@ -89,10 +89,10 @@ resource "aws_iam_role_policy" "athena_gold_query" {
           "athena:StopQueryExecution",
           "athena:GetWorkGroup"
         ]
-        Resource = aws_athena_workgroup.gold_query.arn
+        Resource = aws_athena_workgroup.iceberg_verify.arn
       },
       {
-        Sid    = "ReadGoldGlueMetadata"
+        Sid    = "ReadIcebergGlueMetadata"
         Effect = "Allow"
         Action = [
           "glue:GetDatabase",
@@ -103,26 +103,31 @@ resource "aws_iam_role_policy" "athena_gold_query" {
         ]
         Resource = [
           "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/gold",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/gold/*"
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/bronze",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/silver",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/bronze/*",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/silver/*"
         ]
       },
       {
-        Sid      = "ListGoldAndResultsPrefixes"
+        Sid      = "ListIcebergAndResultsPrefixes"
         Effect   = "Allow"
         Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
         Resource = aws_s3_bucket.lakehouse.arn
         Condition = {
           StringLike = {
-            "s3:prefix" = ["${var.warehouse_prefix}/gold/*", "${var.athena_results_prefix}/*"]
+            "s3:prefix" = ["${var.warehouse_prefix}/bronze/*", "${var.warehouse_prefix}/silver/*", "${var.athena_results_prefix}/*"]
           }
         }
       },
       {
-        Sid      = "ReadGoldIcebergObjects"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject"]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/gold/*"
+        Sid    = "ReadOpenIcebergObjects"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/bronze/*",
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*"
+        ]
       },
       {
         Sid      = "ReadWriteAthenaResultsOnly"
@@ -179,6 +184,12 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
           aws_redshiftserverless_workgroup.gold.arn,
           aws_redshiftserverless_namespace.gold.arn
         ]
+      },
+      {
+        Sid      = "UseRedshiftDataApiForGoldVerification"
+        Effect   = "Allow"
+        Action   = ["redshift-data:DescribeStatement", "redshift-data:ExecuteStatement", "redshift-data:GetStatementResult"]
+        Resource = "*"
       },
       {
         Sid      = "PassEmrServerlessRole"

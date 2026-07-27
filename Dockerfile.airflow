@@ -1,5 +1,5 @@
 # Airflow image for the NYC HVFHV orchestration plane.
-# Glue/PySpark runs remotely; this image does not start local Spark.
+# EMR Serverless PySpark runs remotely; this image does not start local Spark.
 # This image is only for the Airflow orchestration plane.
 FROM apache/airflow:3.3.0-python3.12
 

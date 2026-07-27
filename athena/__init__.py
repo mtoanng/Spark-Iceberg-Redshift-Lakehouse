@@ -1,4 +1,4 @@
-"""Bounded Athena Gold serving utilities."""
+"""Bounded Athena utilities for open Iceberg-layer verification."""
 
 from .query_runner import AthenaQueryError, AthenaQueryResult, AthenaQueryRunner
 

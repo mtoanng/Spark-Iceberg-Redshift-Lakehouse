@@ -18,8 +18,6 @@ from etl.sources.nyc_hvfhs import SourceContractError, SourceFile, stable_run_id
 class RunStatus(StrEnum):
     DISCOVERED = "discovered"
     BRONZE_PUBLISHED = "bronze_published"
-    GE_PASSED = "ge_passed"
-    GE_BLOCKED = "ge_blocked"
     SILVER_PUBLISHED = "silver_published"
     RECONCILED = "reconciled"
     PUBLISHED = "published"
@@ -45,9 +43,6 @@ class SourceRunManifest:
     bronze_snapshot_id: str | None = None
     silver_snapshot_id: str | None = None
     quarantine_snapshot_id: str | None = None
-    validation_status: str | None = None
-    validation_result_uri: str | None = None
-    validation_result_summary: str | None = None
     failure_stage: str | None = None
     failure_message: str | None = None
     completed_at: datetime | None = None
@@ -92,39 +87,11 @@ class SourceRunManifest:
             RunStatus.BRONZE_PUBLISHED, at=at, bronze_row_count=row_count
         )
 
-    def ge_result(
-        self,
-        *,
-        blocking_success: bool,
-        result_uri: str | None,
-        result_summary: str | None = None,
-        at: datetime | None = None,
-    ) -> "SourceRunManifest":
-        if self.run_status is not RunStatus.BRONZE_PUBLISHED:
-            raise SourceContractError(
-                "Great Expectations can run only after Bronze publication."
-            )
-        return self._transition(
-            RunStatus.GE_PASSED if blocking_success else RunStatus.GE_BLOCKED,
-            at=at,
-            validation_status="passed" if blocking_success else "blocked",
-            validation_result_uri=result_uri,
-            validation_result_summary=result_summary,
-            failure_stage=None if blocking_success else "great_expectations",
-            failure_message=(
-                None
-                if blocking_success
-                else "Blocking Great Expectations expectation failed."
-            ),
-        )
-
     def silver_published(
         self, silver_count: int, quarantine_count: int, *, at: datetime | None = None
     ) -> "SourceRunManifest":
-        if self.run_status is not RunStatus.GE_PASSED:
-            raise SourceContractError(
-                "Canonical Silver publication requires a passed Great Expectations gate."
-            )
+        if self.run_status is not RunStatus.BRONZE_PUBLISHED:
+            raise SourceContractError("Canonical Silver publication requires Bronze.")
         if (
             min(silver_count, quarantine_count) < 0
             or self.bronze_row_count != silver_count + quarantine_count

@@ -12,13 +12,11 @@ official monthly HVFHV Parquet + Taxi Zone CSV
 -> S3 landing
 -> Airflow 3
 -> EMR Serverless/PySpark Bronze Iceberg
--> structural Great Expectations gate
 -> EMR Serverless/PySpark Silver Iceberg + quarantine
 -> Redshift Serverless external Bronze/Silver schemas
 -> Cosmos `DbtTaskGroup` -> dbt-redshift managed Gold
--> reconciliation
--> snapshot-aware publication JSON
--> Athena bounded read-only serving
+-> Athena + Redshift Data API reconciliation
+-> deterministic publication JSON -> verification
 ```
 
 Glue Data Catalog is canonical metadata for the Iceberg Bronze, Silver,
@@ -52,9 +50,9 @@ Bronze preserves source fields and adds source URI/file, year/month, checksum,
 run ID, ingestion timestamp, and the three identity fields. It replaces only
 the requested month partition and records count plus snapshot ID.
 
-Great Expectations remains a separate blocking EMR Serverless Spark task. It checks only
-year-specific required columns, non-empty requested month, and identity inputs.
-It persists a concise summary and blocks Silver on failure.
+Bronze checks source existence, checksum, size, required schema, and non-empty
+input before it publishes. Silver owns every row-level validation decision,
+reason priority, exact deduplication, and quarantine output.
 
 Silver owns timestamp ordering, zone resolution, numeric presence/non-negative
 rules, exact `row_id` deduplication, deterministic reason priority, typed
@@ -81,14 +79,13 @@ Airflow 3 keeps this topology:
 
 ```text
 prepare_month
--> bronze_ingestion
--> great_expectations_checkpoint
--> silver_transform
+-> bronze_ingestion_emr
+-> silver_transform_emr
 -> Cosmos `dbt_build` task group
 -> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
--> athena_smoke
+-> verification
 ```
 
 The DAG is manual with `year`, `month`, and `force`. Cosmos Watcher mode runs
@@ -107,18 +104,17 @@ identity policy, status, validation, Bronze/Silver/quarantine/Gold counts,
 layer snapshot IDs, failure stage/message, timestamps, publication status, and
 artifact URI.
 
-After dbt and reconciliation, publication resolves all six Gold table
-locations, row counts, and Iceberg snapshots. It writes deterministic JSON to
-the existing project bucket before changing the operational row to
-`published`. Missing required snapshot metadata blocks publication.
+After dbt and reconciliation, publication records the three open-layer table
+identifiers and available Iceberg snapshots, Redshift Gold database/schema and
+six relation names, counts, dbt artifact URI/SHA-256, and reconciliation
+result. It writes deterministic JSON to the existing project bucket. Gold is
+never represented as an Iceberg path or snapshot.
 
 ## Athena
 
-Exactly four artifacts remain: Gold smoke, business mart, Iceberg
-history/snapshots, and parameterized version travel. The runner records query
-ID, database, workgroup, state, result location, scanned bytes, and engine
-time. Queries are read-only, bounded, partition-filtered where applicable, and
-subject to the workgroup scan cutoff.
+Athena is used only for bounded Bronze, Silver, and quarantine reads. Redshift
+Data API verifies the six Gold relations, month-scoped `fct_trips`, and both
+marts. Queries are read-only, bounded, and month-scoped.
 
 ## Single advanced semantic
 
@@ -137,15 +133,6 @@ Catalog/IAM/Athena resources, and the optional temporary EC2 Airflow runner
 with instance profile. Cosmos is limited to the in-process dbt-redshift
 `DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS management,
 dashboards, alarms, or extra buckets.
-
-### Gold-backend migration boundary
-
-The Gold migration changes the dbt adapter, SQL, profile, and Cosmos runtime
-environment while retaining the DAG dependency chain. The existing Spark
-reconciliation/publication jobs and Athena Gold smoke still implement the
-prior Glue-catalogued Gold Iceberg contract. Their Redshift-aware migration is
-outside this phase, so end-to-end reconciliation, snapshot publication, and
-Athena serving against Redshift-managed Gold remain **NOT VERIFIED**.
 
 `CODEBASE-READY` requires all credential-independent contracts to pass.
 `DEPLOYMENT-VERIFIED` remains `NOT VERIFIED` until a real bounded AWS run

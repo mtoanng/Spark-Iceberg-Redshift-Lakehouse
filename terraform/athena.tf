@@ -1,5 +1,5 @@
-resource "aws_athena_workgroup" "gold_query" {
-  name          = "${var.project_name}-${var.environment}-gold"
+resource "aws_athena_workgroup" "iceberg_verify" {
+  name          = "${var.project_name}-${var.environment}-iceberg-verify"
   force_destroy = false
 
   configuration {
@@ -22,8 +22,8 @@ resource "aws_athena_workgroup" "gold_query" {
 }
 
 output "athena_workgroup_name" {
-  value       = aws_athena_workgroup.gold_query.name
-  description = "Bounded read-only Gold Athena workgroup."
+  value       = aws_athena_workgroup.iceberg_verify.name
+  description = "Bounded read-only Iceberg verification Athena workgroup."
 }
 
 output "athena_results_prefix" {

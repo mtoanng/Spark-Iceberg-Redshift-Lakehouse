@@ -22,10 +22,7 @@ resource "aws_s3_object" "spark_script" {
   for_each = toset([
     "initialize_nyc_iceberg_tables.py",
     "nyc_bronze_ingestion.py",
-    "nyc_great_expectations_checkpoint.py",
     "nyc_silver_transform.py",
-    "nyc_quality_checkpoint.py",
-    "nyc_publish_manifest.py",
   ])
 
   bucket = aws_s3_bucket.lakehouse.id

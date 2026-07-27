@@ -15,9 +15,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 
 ROOT = Path(__file__).parents[1]
-# EMR Serverless provides boto3; Great Expectations requires deployment image
-# verification before an AWS run.
-RUNTIME_DEPENDENCIES = {"great_expectations": "1.19.0"}
+RUNTIME_DEPENDENCIES: dict[str, str] = {}
 
 
 def _files() -> list[Path]:
@@ -37,14 +35,11 @@ def build(output: Path) -> dict[str, object]:
         "entrypoints": [
             "etl/spark_jobs/initialize_nyc_iceberg_tables.py",
             "etl/spark_jobs/nyc_bronze_ingestion.py",
-            "etl/spark_jobs/nyc_great_expectations_checkpoint.py",
             "etl/spark_jobs/nyc_silver_transform.py",
-            "etl/spark_jobs/nyc_quality_checkpoint.py",
-            "etl/spark_jobs/nyc_publish_manifest.py",
         ],
         "dependencies": RUNTIME_DEPENDENCIES,
         "catalog": "glue_catalog",
-        "namespaces": ["bronze", "silver", "ops", "gold"],
+        "namespaces": ["bronze", "silver", "ops"],
         "artifact_s3_key": "spark_jobs/nyc_spark_jobs.zip",
     }
     with ZipFile(output, "w", compression=ZIP_DEFLATED, compresslevel=9) as archive:
@@ -74,7 +69,7 @@ def main() -> None:
             names = set(archive.namelist())
         missing = [entry for entry in manifest["entrypoints"] if entry not in names]
         if missing or "spark_runtime_manifest.json" not in names:
-            raise SystemExit(f"Glue package contract failed; missing={missing}")
+            raise SystemExit(f"Spark package contract failed; missing={missing}")
     print(json.dumps(manifest, sort_keys=True))
 
 

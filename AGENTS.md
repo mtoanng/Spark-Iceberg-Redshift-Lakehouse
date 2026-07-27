@@ -7,11 +7,10 @@ Read `docs/PROJECT2_BLUEPRINT_FINAL.md` before editing. Active architecture:
 ```text
 immutable NYC TLC HVFHV month + Taxi Zones
 -> S3 landing -> Airflow 3 -> EMR Serverless/PySpark Bronze
--> structural Great Expectations gate
 -> EMR Serverless/PySpark Silver + quarantine
 -> Redshift Serverless external schemas -> Cosmos `DbtTaskGroup`
--> dbt-redshift managed Gold -> reconciliation -> snapshot-aware publication
--> bounded read-only Athena
+-> dbt-redshift managed Gold -> Athena/Redshift reconciliation
+-> deterministic publication -> open-layer and Gold verification
 ```
 
 The current temporary EC2/instance-profile Airflow runner remains the deployment
@@ -29,16 +28,15 @@ maintenance suite.
 - `identity_policy_version` and ordered fields come only from
   `etl/contracts/nyc_hvfhs_identity.py`.
 - Bronze is source-faithful plus ingestion and identity metadata.
-- Great Expectations blocks only on required year-specific columns, non-empty
-  month, and identity-policy inputs.
+- Bronze owns source existence, checksum, size, schema, and non-empty input.
 - Silver owns row-level validation, exact deduplication, reason priority, and
   quarantine.
 - Every Bronze row is classified exactly once:
   `bronze_count = silver_count + quarantine_count`.
 - Gold remains exactly three dimensions, one fact, and two marts.
-- Publication writes a durable JSON artifact with counts, locations, and
-  snapshots before marking the run published.
-- Athena remains bounded and read-only.
+- Publication writes a durable JSON artifact with open-layer counts/snapshots,
+  Redshift Gold relation names, and dbt evidence.
+- Athena remains bounded and read-only for Bronze, Silver, and quarantine.
 
 ## Delivery and safety
 

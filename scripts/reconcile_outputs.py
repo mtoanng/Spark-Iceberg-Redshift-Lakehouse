@@ -20,7 +20,7 @@ def reconcile(manifest: dict[str, object]) -> None:
     )
     gold = int(manifest.get("gold_row_count", silver))
     publication = int(manifest.get("publication_gold_row_count", gold))
-    athena = int(manifest.get("athena_smoke_row_count", publication))
+    open_layers = int(manifest.get("athena_open_layer_row_count", bronze))
     differences = {
         "source_vs_bronze": source - bronze,
         "bronze_vs_classified": bronze - silver - quarantine,
@@ -28,12 +28,9 @@ def reconcile(manifest: dict[str, object]) -> None:
         - sum(int(value) for value in quarantine_by_reason.values()),
         "gold_vs_silver": gold - silver,
         "publication_vs_gold": publication - gold,
-        "athena_vs_publication": athena - publication,
+        "athena_open_layers_vs_bronze": open_layers - bronze,
     }
-    if any(differences.values()) or manifest.get("validation_status") not in {
-        "validated",
-        "passed",
-    }:
+    if any(differences.values()):
         raise ValueError(f"publication reconciliation differences: {differences}")
 
 

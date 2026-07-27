@@ -2,7 +2,8 @@
 
 The monthly DAG processes exactly one immutable month. The companion backfill
 DAG triggers four such runs sequentially. Neither DAG contains transformation
-logic; Glue, dbt, and the quality checkpoint own that work.
+logic; EMR Serverless, dbt-redshift, and lightweight verification adapters own
+that work.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.amazon.aws.operators.emr import EmrServerlessStartJobOperator
@@ -20,11 +20,15 @@ from cosmos.config import ExecutionConfig, ProfileConfig, ProjectConfig, RenderC
 from cosmos.constants import ExecutionMode, InvocationMode, TestBehavior
 
 from etl.orchestration.nyc_hvfhs_cosmos import require_dbt_result_artifact
+from etl.orchestration.nyc_hvfhs_publication import publish_month
+from etl.orchestration.nyc_hvfhs_reconciliation import reconcile_month
 from etl.orchestration.nyc_hvfhs_runs import (
     MonthlyRunRequest,
     audit_for_source,
     sequential_backfill_requests,
 )
+from etl.orchestration.nyc_hvfhs_verification import verify_month
+from etl.contracts.nyc_hvfhs_identity import identity_policy_version
 from etl.sources.nyc_hvfhs import SourceFile, monthly_trip_filename
 
 
@@ -104,6 +108,7 @@ def _prepare_month(year: int, month: int, force: bool) -> dict[str, object]:
         "source_uri": audit.source_uri,
         "source_checksum": audit.source_checksum,
         "source_size_bytes": source.source_size_bytes,
+        "identity_policy_version": identity_policy_version(request.year),
         "force": audit.force,
         "taxi_zone_uri": Variable.get("nyc_taxi_zone_uri"),
         "taxi_zone_checksum": Variable.get("nyc_taxi_zone_sha256"),
@@ -120,7 +125,7 @@ def _monthly_params() -> dict[str, Param]:
 
 with DAG(
     dag_id=MONTHLY_DAG_ID,
-    description="Manual one-month NYC TLC HVFHV Bronze-to-Gold run with a quality gate.",
+    description="Manual one-month NYC TLC HVFHV Bronze-to-Gold run.",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
@@ -141,7 +146,7 @@ with DAG(
     )
 
     bronze_ingestion = EmrServerlessStartJobOperator(
-        task_id="bronze_ingestion",
+        task_id="bronze_ingestion_emr",
         **_emr_spark_job(
             "nyc_bronze_ingestion.py",
             [
@@ -167,23 +172,8 @@ with DAG(
         ),
     )
 
-    great_expectations_checkpoint = EmrServerlessStartJobOperator(
-        task_id="great_expectations_checkpoint",
-        **_emr_spark_job(
-            "nyc_great_expectations_checkpoint.py",
-            [
-                "--SOURCE_YEAR",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-                "--SOURCE_MONTH",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-                "--INGESTION_RUN_ID",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            ],
-        ),
-    )
-
     silver_transform = EmrServerlessStartJobOperator(
-        task_id="silver_transform",
+        task_id="silver_transform_emr",
         **_emr_spark_job(
             "nyc_silver_transform.py",
             [
@@ -236,71 +226,55 @@ with DAG(
         },
     )
 
-    reconciliation = EmrServerlessStartJobOperator(
+    reconciliation = PythonOperator(
         task_id="reconciliation",
-        **_emr_spark_job(
-            "nyc_quality_checkpoint.py",
-            [
-                "--SOURCE_YEAR",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-                "--SOURCE_MONTH",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-                "--INGESTION_RUN_ID",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            ],
-        ),
+        python_callable=reconcile_month,
+        op_kwargs={
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            "athena_workgroup": "{{ var.value.athena_workgroup }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+            "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
+        },
     )
 
-    publication_manifest = EmrServerlessStartJobOperator(
+    publication_manifest = PythonOperator(
         task_id="publication_manifest",
-        **_emr_spark_job(
-            "nyc_publish_manifest.py",
-            [
-                "--SOURCE_YEAR",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-                "--SOURCE_MONTH",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-                "--INGESTION_RUN_ID",
-                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-                "--DBT_RESULT_URI",
-                "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
-                "--PUBLICATION_PREFIX_URI",
-                "{{ var.value.nyc_publication_prefix_uri }}",
-            ],
-        ),
+        python_callable=publish_month,
+        op_kwargs={
+            "audit": "{{ ti.xcom_pull(task_ids='prepare_month') }}",
+            "reconciliation": "{{ ti.xcom_pull(task_ids='reconciliation') }}",
+            "dbt_result_uri": "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
+            "publication_prefix_uri": "{{ var.value.nyc_publication_prefix_uri }}",
+            "athena_workgroup": "{{ var.value.athena_workgroup }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+        },
     )
 
-    athena_smoke = BashOperator(
-        task_id="athena_smoke",
-        bash_command=(
-            'if [ "${ATHENA_SMOKE_ENABLED:-false}" != "true" ]; then '
-            "echo 'Athena smoke command deferred; set ATHENA_SMOKE_ENABLED=true in approved cloud config.'; "
-            "else python -m athena.verify_gold "
-            "--year {{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }} "
-            "--month {{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }} "
-            "--database $GLUE_GOLD_DATABASE --workgroup $ATHENA_WORKGROUP "
-            "--max-scanned-bytes $ATHENA_BYTES_SCANNED_CUTOFF; fi"
-        ),
-        env={
-            "GLUE_GOLD_DATABASE": "{{ var.value.glue_gold_database }}",
-            "ATHENA_WORKGROUP": "{{ var.value.athena_workgroup }}",
-            "AWS_REGION": "{{ var.value.aws_region }}",
-            "AWS_DEFAULT_REGION": "{{ var.value.aws_region }}",
-            "ATHENA_BYTES_SCANNED_CUTOFF": "{{ var.value.athena_bytes_scanned_cutoff }}",
-            "ATHENA_SMOKE_ENABLED": "{{ var.value.athena_smoke_enabled | default('false') }}",
+    verification = PythonOperator(
+        task_id="verification",
+        python_callable=verify_month,
+        op_kwargs={
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            "reconciliation": "{{ ti.xcom_pull(task_ids='reconciliation') }}",
+            "athena_workgroup": "{{ var.value.athena_workgroup }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+            "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
         },
     )
 
     (
         prepare_month
         >> bronze_ingestion
-        >> great_expectations_checkpoint
         >> silver_transform
         >> dbt_build
         >> dbt_result_artifact
         >> reconciliation
         >> publication_manifest
-        >> athena_smoke
+        >> verification
     )
 
 
@@ -384,6 +358,7 @@ nyc_hvfhs_monthly_dag.doc_md = """
 
 Manually trigger this DAG with `year`, `month`, and `force`. `force` only
 requests a retry of the same immutable source identity; a changed checksum must
-be blocked by the manifest contract. Great Expectations is the mandatory
-promotion gate before Silver; the post-Gold quality task is reconciliation.
+be blocked by the manifest contract. Bronze owns source checks, Silver owns
+row validation/quarantine, dbt owns Gold tests, and reconciliation owns the
+cross-layer count invariants.
 """

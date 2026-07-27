@@ -1,4 +1,4 @@
-"""Month-scoped Silver/quarantine publication guarded by Great Expectations."""
+"""Month-scoped Silver/quarantine publication after Bronze validation."""
 
 from pyspark.sql import Window
 from pyspark.sql import SparkSession
@@ -56,17 +56,15 @@ def main() -> None:
         args["INGESTION_RUN_ID"],
     )
     status = spark.sql(
-        f"SELECT run_status, validation_status, failure_stage FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
+        f"SELECT run_status, failure_stage FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
     ).collect()
     retrying_silver = bool(status) and (
-        status[0].run_status == "failed"
-        and status[0].failure_stage == "silver"
-        and status[0].validation_status == "passed"
+        status[0].run_status == "failed" and status[0].failure_stage == "silver"
     )
-    if not status or (status[0].run_status != "ge_passed" and not retrying_silver):
-        raise ValueError(
-            "Silver publication is blocked until the Great Expectations gate passes for this run."
-        )
+    if not status or (
+        status[0].run_status != "bronze_published" and not retrying_silver
+    ):
+        raise ValueError("Silver publication requires the requested Bronze run.")
     try:
         trips = spark.table(BRONZE_TRIPS_TABLE).filter(
             (col("_source_year") == year)

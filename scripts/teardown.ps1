@@ -8,9 +8,9 @@ $targets = @(
     'aws_iam_instance_profile.airflow_runner',
     'aws_iam_role_policy_attachment.airflow_ssm',
     'aws_iam_role_policy.airflow_runner_access',
-    'aws_iam_role_policy.athena_gold_query',
+    'aws_iam_role_policy.athena_iceberg_verify',
     'aws_iam_role.airflow_runner',
-    'aws_athena_workgroup.gold_query',
+    'aws_athena_workgroup.iceberg_verify',
     'aws_emrserverless_application.spark',
     'aws_iam_role_policy.emr_serverless_lakehouse',
     'aws_iam_role.emr_serverless_execution'

@@ -53,7 +53,7 @@ def test_ddl_targets_glue_iceberg_v2_under_bounded_location() -> None:
     )
 
 
-def test_manifest_table_persists_source_identity_status_validation_and_reconciliation_counts() -> (
+def test_manifest_table_persists_source_identity_status_and_reconciliation_counts() -> (
     None
 ):
     spec = next(
@@ -71,7 +71,6 @@ def test_manifest_table_persists_source_identity_status_validation_and_reconcili
         "silver_row_count",
         "quarantine_row_count",
         "failure_message",
-        "validation_result_summary",
         "bronze_snapshot_id",
         "silver_snapshot_id",
         "quarantine_snapshot_id",

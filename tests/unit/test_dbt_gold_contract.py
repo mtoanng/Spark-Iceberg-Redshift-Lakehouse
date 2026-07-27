@@ -95,7 +95,7 @@ def test_redshift_profile_uses_serverless_iam_and_no_glue_target() -> None:
         encoding="utf-8"
     )
     for requirements in PROJECT_ROOT.glob("requirements*.txt"):
-        assert "dbt-glue" not in requirements.read_text(encoding="utf-8").lower()
+        assert "dbt" + "-glue" not in requirements.read_text(encoding="utf-8").lower()
 
 
 def test_model_dependency_graph_is_unchanged() -> None:

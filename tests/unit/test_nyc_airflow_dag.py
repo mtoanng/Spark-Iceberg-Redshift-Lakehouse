@@ -77,9 +77,6 @@ def _fake_airflow_modules(monkeypatch):
         "airflow.sdk": types.SimpleNamespace(
             DAG=FakeDAG, Param=FakeParam, Variable=FakeVariable
         ),
-        "airflow.providers.standard.operators.bash": types.SimpleNamespace(
-            BashOperator=FakeOperator
-        ),
         "airflow.providers.standard.operators.python": types.SimpleNamespace(
             PythonOperator=FakeOperator
         ),
@@ -117,37 +114,37 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert monthly.dag_id == "nyc_hvfhs_monthly"
     assert [task.task_id for task in monthly.tasks] == [
         "prepare_month",
-        "bronze_ingestion",
-        "great_expectations_checkpoint",
-        "silver_transform",
+        "bronze_ingestion_emr",
+        "silver_transform_emr",
         "dbt_build",
         "dbt_result_artifact",
         "reconciliation",
         "publication_manifest",
-        "athena_smoke",
+        "verification",
     ]
     assert monthly.params["year"].default == 2024
     assert monthly.params["month"].default == 1
     assert monthly.params["force"].default is False
-    assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion"}
-    assert monthly.tasks[1].downstream_task_ids == {"great_expectations_checkpoint"}
-    assert all(
-        monthly.tasks[index].kwargs["aws_conn_id"] is None for index in (1, 2, 3, 6, 7)
-    )
+    assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion_emr"}
+    assert monthly.tasks[1].downstream_task_ids == {"silver_transform_emr"}
+    assert all(monthly.tasks[index].kwargs["aws_conn_id"] is None for index in (1, 2))
     assert all(
         monthly.tasks[index].kwargs["application_id"]
         == "{{ var.value.nyc_emr_serverless_application_id }}"
-        for index in (1, 2, 3, 6, 7)
+        for index in (1, 2)
     )
-    assert monthly.tasks[2].downstream_task_ids == {"silver_transform"}
-    assert monthly.tasks[4].downstream_task_ids == {"dbt_result_artifact"}
-    assert monthly.tasks[5].downstream_task_ids == {"reconciliation"}
-    assert monthly.tasks[6].downstream_task_ids == {"publication_manifest"}
-    assert "trigger_rule" not in monthly.tasks[5].kwargs
-    assert "trigger_rule" not in monthly.tasks[6].kwargs
-    assert "trigger_rule" not in monthly.tasks[7].kwargs
-    assert monthly.tasks[7].downstream_task_ids == {"athena_smoke"}
-    dbt_group = monthly.tasks[4]
+    assert monthly.tasks[2].downstream_task_ids == {"dbt_build"}
+    assert monthly.tasks[3].downstream_task_ids == {"dbt_result_artifact"}
+    assert monthly.tasks[4].downstream_task_ids == {"reconciliation"}
+    assert monthly.tasks[5].downstream_task_ids == {"publication_manifest"}
+    assert monthly.tasks[6].downstream_task_ids == {"verification"}
+    assert all(
+        "trigger_rule" not in monthly.tasks[index].kwargs for index in (4, 5, 6, 7)
+    )
+    assert monthly.tasks[5].kwargs["python_callable"].__name__ == "reconcile_month"
+    assert monthly.tasks[6].kwargs["python_callable"].__name__ == "publish_month"
+    assert monthly.tasks[7].kwargs["python_callable"].__name__ == "verify_month"
+    dbt_group = monthly.tasks[3]
     assert (
         dbt_group.kwargs["project_config"].kwargs["dbt_project_path"].name
         == "dbt_project"
@@ -165,15 +162,6 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
         "source_year",
         "source_month",
     }
-    publication_driver = monthly.tasks[7].kwargs["job_driver"]["sparkSubmit"]
-    assert "nyc_publish_manifest.py" in publication_driver["entryPoint"]
-    assert any(
-        "dbt_result_artifact" in argument
-        for argument in publication_driver["entryPointArguments"]
-    )
-    assert "--py-files" in publication_driver["sparkSubmitParameters"]
-    assert "--max-scanned-bytes" in monthly.tasks[8].kwargs["bash_command"]
-    assert "AWS_REGION" in monthly.tasks[8].kwargs["env"]
 
     backfill = module.nyc_hvfhs_four_month_backfill_dag
     assert [task.task_id for task in backfill.tasks] == [

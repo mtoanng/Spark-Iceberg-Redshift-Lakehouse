@@ -35,7 +35,9 @@ def _git_paths(*args: str) -> tuple[Path, ...]:
         check=True,
         capture_output=True,
     )
-    return tuple(Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item)
+    return tuple(
+        Path(item.decode("utf-8")) for item in result.stdout.split(b"\0") if item
+    )
 
 
 def violations() -> list[str]:
@@ -48,13 +50,22 @@ def violations() -> list[str]:
         if not path.exists():
             continue
         lowered_parts = {part.lower() for part in relative.parts}
-        if lowered_parts & FORBIDDEN_TRACKED_PARTS or relative.suffix.lower() in FORBIDDEN_SUFFIXES:
-            problems.append(f"generated or sensitive artifact is tracked: {relative.as_posix()}")
+        if (
+            lowered_parts & FORBIDDEN_TRACKED_PARTS
+            or relative.suffix.lower() in FORBIDDEN_SUFFIXES
+        ):
+            problems.append(
+                f"generated or sensitive artifact is tracked: {relative.as_posix()}"
+            )
             continue
         if path.is_file() and AWS_ACCESS_KEY.search(path.read_bytes()):
-            problems.append(f"possible AWS access key is tracked: {relative.as_posix()}")
+            problems.append(
+                f"possible AWS access key is tracked: {relative.as_posix()}"
+            )
 
-    ignored = set(_git_paths("ls-files", "-z", "--others", "--ignored", "--exclude-standard"))
+    ignored = set(
+        _git_paths("ls-files", "-z", "--others", "--ignored", "--exclude-standard")
+    )
     for required in REQUIRED_TRACKABLE:
         if Path(required) in ignored:
             problems.append(f"required source is ignored: {required}")

@@ -6,12 +6,11 @@ Replayable monthly NYC TLC HVFHV lakehouse:
 immutable S3 landing
 -> Airflow 3
 -> EMR Serverless PySpark Bronze Iceberg
--> structural Great Expectations gate
 -> EMR Serverless PySpark Silver + quarantine Iceberg
 -> Redshift Serverless external Bronze/Silver schemas
 -> Cosmos `DbtTaskGroup` + dbt-redshift managed Gold
--> reconciliation + snapshot-aware publication
--> bounded read-only Athena
+-> Athena + Redshift Data API reconciliation
+-> deterministic publication + verification
 ```
 
 Iceberg on S3 remains canonical for Bronze, Silver, quarantine, and operational
@@ -28,7 +27,7 @@ key and never drops data. `identity_policy_version` makes the ordered field set
 auditable. Python and Spark share
 `etl/contracts/nyc_hvfhs_identity.py`.
 
-Great Expectations checks structure, non-empty month, and identity inputs.
+Bronze checks source existence, checksum, size, schema, and non-empty input.
 Silver alone owns row-level validation and deterministic quarantine. Required
 invariant:
 
@@ -61,6 +60,5 @@ Deployment and execution commands are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 Operational semantics are in [docs/SEMANTICS.md](docs/SEMANTICS.md).
 
 No real AWS execution is claimed. Redshift connectivity, external Iceberg
-reads, managed Gold builds, and the existing downstream Spark
-reconciliation/publication/Athena adapters are **NOT VERIFIED** until a bounded
-AWS run and any required downstream migration retain evidence.
+reads, managed Gold builds, reconciliation, publication, and verification are
+**NOT VERIFIED** until a bounded AWS run retains evidence.

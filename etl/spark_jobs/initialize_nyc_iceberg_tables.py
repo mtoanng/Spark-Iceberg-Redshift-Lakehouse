@@ -18,7 +18,6 @@ args = parse_arguments(
         "BRONZE_DATABASE": "bronze",
         "SILVER_DATABASE": "silver",
         "OPS_DATABASE": "ops",
-        "GOLD_DATABASE": "gold",
         "APPLY_2025_EVOLUTION": "false",
     },
 )
