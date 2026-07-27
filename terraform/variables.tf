@@ -66,33 +66,27 @@ variable "athena_bytes_scanned_cutoff" {
   }
 }
 
-variable "glue_worker_type" {
+variable "spark_package_path" {
   type        = string
-  description = "Smallest approved Glue worker type for the bounded demo."
-  default     = "G.1X"
+  description = "Repository-root-relative deterministic PySpark zip produced before deployment."
+  default     = "build/nyc_spark_jobs.zip"
 }
 
-variable "glue_worker_count" {
+variable "spark_package_s3_key" {
+  type        = string
+  description = "S3 key for the shared EMR Serverless Python package."
+  default     = "spark_jobs/nyc_spark_jobs.zip"
+}
+
+variable "emr_serverless_idle_timeout_minutes" {
   type        = number
-  description = "Worker count for each Glue job."
-  default     = 2
+  description = "Idle minutes before the persistent EMR Serverless application stops."
+  default     = 15
 
   validation {
-    condition     = var.glue_worker_count >= 2 && var.glue_worker_count <= 10
-    error_message = "glue_worker_count must be between 2 and 10."
+    condition     = var.emr_serverless_idle_timeout_minutes >= 1 && var.emr_serverless_idle_timeout_minutes <= 60
+    error_message = "emr_serverless_idle_timeout_minutes must be between 1 and 60."
   }
-}
-
-variable "glue_package_path" {
-  type        = string
-  description = "Repository-root-relative deterministic zip produced before deployment."
-  default     = "build/nyc_glue_jobs.zip"
-}
-
-variable "glue_package_s3_key" {
-  type        = string
-  description = "S3 key for the shared Glue Python package."
-  default     = "glue_jobs/nyc_glue_jobs.zip"
 }
 
 variable "airflow_runner_ami_id" {

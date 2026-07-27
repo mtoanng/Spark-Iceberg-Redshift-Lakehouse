@@ -13,7 +13,7 @@ from pathlib import Path
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
-from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
+from airflow.providers.amazon.aws.operators.emr import EmrServerlessStartJobOperator
 from airflow.sdk import DAG, Param, Variable
 from cosmos import DbtTaskGroup
 from cosmos.config import ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
@@ -40,6 +40,43 @@ DEFAULT_ARGS = {
     "email_on_failure": False,
     "email_on_retry": False,
 }
+
+EMR_APPLICATION_ID = "{{ var.value.nyc_emr_serverless_application_id }}"
+EMR_EXECUTION_ROLE_ARN = "{{ var.value.nyc_emr_serverless_execution_role_arn }}"
+EMR_SCRIPT_PREFIX_URI = "{{ var.value.nyc_spark_script_prefix_uri }}"
+EMR_PACKAGE_URI = "{{ var.value.nyc_spark_package_uri }}"
+EMR_LOG_URI = "{{ var.value.nyc_emr_serverless_log_uri }}"
+
+
+def _emr_spark_job(script_name: str, arguments: list[str]) -> dict[str, object]:
+    """Build one EMR Serverless Spark submission against the Glue catalog."""
+
+    return {
+        "application_id": EMR_APPLICATION_ID,
+        "execution_role_arn": EMR_EXECUTION_ROLE_ARN,
+        "job_driver": {
+            "sparkSubmit": {
+                "entryPoint": f"{EMR_SCRIPT_PREFIX_URI}/{script_name}",
+                "entryPointArguments": arguments,
+                "sparkSubmitParameters": (
+                    f"--py-files {EMR_PACKAGE_URI} "
+                    "--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
+                    "--conf spark.sql.defaultCatalog=glue_catalog "
+                    "--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
+                    "--conf spark.sql.catalog.glue_catalog.warehouse={{ var.value.nyc_warehouse_uri }} "
+                    "--conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog "
+                    "--conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO"
+                ),
+            }
+        },
+        "configuration_overrides": {
+            "monitoringConfiguration": {
+                "s3MonitoringConfiguration": {"logUri": EMR_LOG_URI}
+            }
+        },
+        "aws_conn_id": None,
+        "wait_for_completion": True,
+    }
 
 
 def _prepare_month(year: int, month: int, force: bool) -> dict[str, object]:
@@ -103,49 +140,61 @@ with DAG(
         },
     )
 
-    bronze_ingestion = GlueJobOperator(
+    bronze_ingestion = EmrServerlessStartJobOperator(
         task_id="bronze_ingestion",
-        job_name="{{ var.value.nyc_bronze_job_name }}",
-        script_args={
-            "--SOURCE_URI": "{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}",
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--SOURCE_CHECKSUM": "{{ ti.xcom_pull(task_ids='prepare_month')['source_checksum'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "--TAXI_ZONE_URI": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_uri'] }}",
-            "--TAXI_ZONE_CHECKSUM": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_checksum'] }}",
-            "--SOURCE_SIZE_BYTES": "{{ ti.xcom_pull(task_ids='prepare_month')['source_size_bytes'] }}",
-            "--FORCE": "{{ ti.xcom_pull(task_ids='prepare_month')['force'] }}",
-        },
-        aws_conn_id=None,
-        wait_for_completion=True,
-        verbose=True,
+        **_emr_spark_job(
+            "nyc_bronze_ingestion.py",
+            [
+                "--SOURCE_URI",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}",
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--SOURCE_CHECKSUM",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_checksum'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+                "--TAXI_ZONE_URI",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_uri'] }}",
+                "--TAXI_ZONE_CHECKSUM",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_checksum'] }}",
+                "--SOURCE_SIZE_BYTES",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_size_bytes'] }}",
+                "--FORCE",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['force'] }}",
+            ],
+        ),
     )
 
-    great_expectations_checkpoint = GlueJobOperator(
+    great_expectations_checkpoint = EmrServerlessStartJobOperator(
         task_id="great_expectations_checkpoint",
-        job_name="{{ var.value.nyc_great_expectations_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-        },
-        aws_conn_id=None,
-        wait_for_completion=True,
-        verbose=True,
+        **_emr_spark_job(
+            "nyc_great_expectations_checkpoint.py",
+            [
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            ],
+        ),
     )
 
-    silver_transform = GlueJobOperator(
+    silver_transform = EmrServerlessStartJobOperator(
         task_id="silver_transform",
-        job_name="{{ var.value.nyc_silver_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-        },
-        aws_conn_id=None,
-        wait_for_completion=True,
-        verbose=True,
+        **_emr_spark_job(
+            "nyc_silver_transform.py",
+            [
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            ],
+        ),
     )
 
     dbt_build = DbtTaskGroup(
@@ -187,31 +236,38 @@ with DAG(
         },
     )
 
-    reconciliation = GlueJobOperator(
+    reconciliation = EmrServerlessStartJobOperator(
         task_id="reconciliation",
-        job_name="{{ var.value.nyc_reconciliation_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-        },
-        aws_conn_id=None,
-        wait_for_completion=True,
-        verbose=True,
+        **_emr_spark_job(
+            "nyc_quality_checkpoint.py",
+            [
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            ],
+        ),
     )
 
-    publication_manifest = GlueJobOperator(
+    publication_manifest = EmrServerlessStartJobOperator(
         task_id="publication_manifest",
-        job_name="{{ var.value.nyc_publication_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "--DBT_RESULT_URI": "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
-        },
-        aws_conn_id=None,
-        wait_for_completion=True,
-        verbose=True,
+        **_emr_spark_job(
+            "nyc_publish_manifest.py",
+            [
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+                "--DBT_RESULT_URI",
+                "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
+                "--PUBLICATION_PREFIX_URI",
+                "{{ var.value.nyc_publication_prefix_uri }}",
+            ],
+        ),
     )
 
     athena_smoke = BashOperator(

@@ -33,7 +33,7 @@ def verify(
 ) -> dict[str, object]:
     clients = clients or {
         service: boto3.client(service, region_name=region)
-        for service in ("athena", "ec2", "glue", "iam", "s3")
+        for service in ("athena", "ec2", "emr-serverless", "glue", "iam", "s3")
     }
     prefix = f"{project_name}-{environment}"
     result: dict[str, object] = {}
@@ -47,7 +47,9 @@ def verify(
     temporary_prefixes = {}
     for key in ("tmp/", f"{athena_results_prefix.strip('/')}/"):
         objects = clients["s3"].list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
-        temporary_prefixes[key] = "EMPTY" if objects.get("KeyCount", 0) == 0 else "PRESENT"
+        temporary_prefixes[key] = (
+            "EMPTY" if objects.get("KeyCount", 0) == 0 else "PRESENT"
+        )
     result["temporary_prefixes"] = temporary_prefixes
 
     try:
@@ -56,22 +58,17 @@ def verify(
     except clients["athena"].exceptions.ClientError as error:
         result["athena_workgroup"] = "ABSENT" if _absent(error) else "UNKNOWN"
 
-    jobs = {}
-    for suffix in (
-        "initialize",
-        "bronze",
-        "great-expectations",
-        "silver",
-        "reconciliation",
-        "publication",
-    ):
-        name = f"{prefix}-{suffix}"
-        try:
-            clients["glue"].get_job(JobName=name)
-            jobs[name] = "PRESENT"
-        except clients["glue"].exceptions.EntityNotFoundException:
-            jobs[name] = "ABSENT"
-    result["glue_jobs"] = jobs
+    try:
+        applications = (
+            clients["emr-serverless"].list_applications().get("applications", [])
+        )
+        result["emr_serverless_application"] = (
+            "PRESENT"
+            if any(app.get("name") == f"{prefix}-spark" for app in applications)
+            else "ABSENT"
+        )
+    except clients["emr-serverless"].exceptions.ClientError as error:
+        result["emr_serverless_application"] = "ABSENT" if _absent(error) else "UNKNOWN"
 
     databases = {}
     for name in ("bronze", "silver", "ops", "gold"):
@@ -85,17 +82,26 @@ def verify(
     instances = clients["ec2"].describe_instances(
         Filters=[
             {"Name": "tag:Name", "Values": [f"{prefix}-airflow-runner"]},
-            {"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]},
+            {
+                "Name": "instance-state-name",
+                "Values": ["pending", "running", "stopping", "stopped"],
+            },
         ]
     )
     result["airflow_runner"] = (
-        "PRESENT" if any(item["Instances"] for item in instances["Reservations"]) else "ABSENT"
+        "PRESENT"
+        if any(item["Instances"] for item in instances["Reservations"])
+        else "ABSENT"
     )
 
     for kind, api_name, name in (
         ("airflow_role", "get_role", f"{prefix}-airflow-runner"),
-        ("airflow_instance_profile", "get_instance_profile", f"{prefix}-airflow-profile"),
-        ("glue_role", "get_role", f"{prefix}-glue"),
+        (
+            "airflow_instance_profile",
+            "get_instance_profile",
+            f"{prefix}-airflow-profile",
+        ),
+        ("emr_serverless_role", "get_role", f"{prefix}-emr-serverless"),
     ):
         argument = "RoleName" if api_name == "get_role" else "InstanceProfileName"
         try:
@@ -130,18 +136,18 @@ def main() -> None:
         result["airflow_runner"],
         result["airflow_role"],
         result["airflow_instance_profile"],
-        result["glue_role"],
-        *result["glue_jobs"].values(),
+        result["emr_serverless_role"],
+        result["emr_serverless_application"],
     ]
     if (
         result["canonical_bucket"] != "PRESENT"
         or any(value != "PRESENT" for value in result["canonical_databases"].values())
-        or any(
-        value != "ABSENT" for value in expected_absent
-        )
+        or any(value != "ABSENT" for value in expected_absent)
         or any(value != "EMPTY" for value in result["temporary_prefixes"].values())
     ):
-        raise SystemExit("Teardown verification did not reach the expected retained-data state.")
+        raise SystemExit(
+            "Teardown verification did not reach the expected retained-data state."
+        )
 
 
 if __name__ == "__main__":

@@ -86,8 +86,8 @@ def _fake_airflow_modules(monkeypatch):
         "airflow.providers.standard.operators.trigger_dagrun": types.SimpleNamespace(
             TriggerDagRunOperator=FakeOperator
         ),
-        "airflow.providers.amazon.aws.operators.glue": types.SimpleNamespace(
-            GlueJobOperator=FakeOperator
+        "airflow.providers.amazon.aws.operators.emr": types.SimpleNamespace(
+            EmrServerlessStartJobOperator=FakeOperator
         ),
         "cosmos": types.SimpleNamespace(DbtTaskGroup=FakeDbtTaskGroup),
         "cosmos.config": types.SimpleNamespace(
@@ -134,6 +134,11 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert all(
         monthly.tasks[index].kwargs["aws_conn_id"] is None for index in (1, 2, 3, 6, 7)
     )
+    assert all(
+        monthly.tasks[index].kwargs["application_id"]
+        == "{{ var.value.nyc_emr_serverless_application_id }}"
+        for index in (1, 2, 3, 6, 7)
+    )
     assert monthly.tasks[2].downstream_task_ids == {"silver_transform"}
     assert monthly.tasks[4].downstream_task_ids == {"dbt_result_artifact"}
     assert monthly.tasks[5].downstream_task_ids == {"reconciliation"}
@@ -157,10 +162,13 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
         "source_year",
         "source_month",
     }
-    assert (
-        "dbt_result_artifact"
-        in monthly.tasks[7].kwargs["script_args"]["--DBT_RESULT_URI"]
+    publication_driver = monthly.tasks[7].kwargs["job_driver"]["sparkSubmit"]
+    assert "nyc_publish_manifest.py" in publication_driver["entryPoint"]
+    assert any(
+        "dbt_result_artifact" in argument
+        for argument in publication_driver["entryPointArguments"]
     )
+    assert "--py-files" in publication_driver["sparkSubmitParameters"]
     assert "--max-scanned-bytes" in monthly.tasks[8].kwargs["bash_command"]
     assert "AWS_REGION" in monthly.tasks[8].kwargs["env"]
 

@@ -28,7 +28,7 @@ document and that blueprint disagree, the blueprint wins.
 
 The project takes one checksum-pinned official NYC TLC HVFHV monthly Parquet
 file and Taxi Zone lookup, lands them immutably in S3, orchestrates
-Bronze-to-Gold Iceberg processing with Airflow 3 and Glue 4.0, classifies every
+Bronze-to-Gold Iceberg processing with Airflow 3 and EMR Serverless, classifies every
 Bronze row into either canonical Silver or reason-coded quarantine, publishes
 snapshot-aware evidence only after dbt and reconciliation succeed, and exposes
 only bounded read-only Athena queries.
@@ -120,7 +120,7 @@ prepare_month
 ```
 
 The DAG is manual, accepts `year`, `month`, and `force`, permits only one active
-monthly run, and gives tasks two Airflow retries by default. Glue jobs perform
+monthly run, and gives tasks two Airflow retries by default. EMR Serverless jobs perform
 distributed work; the DAG passes arguments and waits for completion.
 
 ### 3.3 Metadata and state plane
@@ -166,7 +166,7 @@ s3://<bucket>/
     silver/
     ops/
     gold/
-  glue_jobs/             Glue entry scripts and shared Python zip
+  spark_jobs/            EMR Serverless PySpark entry scripts and shared Python zip
   manifests/             dbt results and publication JSON
   athena-results/        Athena output only
   tmp/                   Glue temporary files
@@ -584,7 +584,7 @@ Until a retained controlled AWS run exists, the following remain
 
 - Terraform apply and real resource creation;
 - source upload into the target account;
-- Glue 4.0 execution and CloudWatch behavior;
+- EMR Serverless execution and CloudWatch behavior;
 - actual Iceberg writes, partitions, and snapshot IDs;
 - Great Expectations inside Glue;
 - dbt-glue interactive session and model execution;

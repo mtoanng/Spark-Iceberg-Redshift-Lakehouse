@@ -2,14 +2,10 @@
 
 from datetime import datetime, timezone
 import json
-import sys
 from urllib.parse import urlparse
 
 import boto3
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
 
 from etl.publication.nyc_hvfhs import (
     REQUIRED_GOLD_TABLES,
@@ -18,23 +14,27 @@ from etl.publication.nyc_hvfhs import (
     canonical_json,
     publication_key,
 )
+from etl.spark_jobs.arguments import parse_arguments
 
 
-args = getResolvedOptions(
-    sys.argv,
+args = parse_arguments(
     [
-        "JOB_NAME",
         "SOURCE_YEAR",
         "SOURCE_MONTH",
         "INGESTION_RUN_ID",
         "DBT_RESULT_URI",
     ],
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "GOLD_DATABASE": "gold",
+        "OPS_DATABASE": "ops",
+        "PUBLICATION_PREFIX_URI": "",
+    },
 )
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def _table(namespace: str, name: str) -> str:
@@ -61,10 +61,7 @@ def _location(spark, table: str) -> str:
 
 
 def main() -> None:
-    context = GlueContext(SparkContext.getOrCreate())
-    job = Job(context)
-    job.init(args["JOB_NAME"], args)
-    spark = context.spark_session
+    spark = SparkSession.builder.getOrCreate()
     year, month = int(args["SOURCE_YEAR"]), int(args["SOURCE_MONTH"])
     run_id = args["INGESTION_RUN_ID"].replace("'", "''")
     manifest_table = _table("ops", "source_run_manifest")
@@ -166,7 +163,6 @@ def main() -> None:
         f"updated_at=current_timestamp() WHERE source_year={year} AND source_month={month} "
         f"AND ingestion_run_id='{run_id}' AND run_status='reconciled'"
     )
-    job.commit()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ reviewed plan lowers it.
 ## 1. Review and plan
 
 ```powershell
-python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform fmt -check -recursive
 terraform -chdir=terraform validate

@@ -11,9 +11,9 @@ Athena query.
 official monthly HVFHV Parquet + Taxi Zone CSV
 -> S3 landing
 -> Airflow 3
--> Glue 4.0/PySpark Bronze Iceberg
+-> EMR Serverless/PySpark Bronze Iceberg
 -> structural Great Expectations gate
--> Glue 4.0/PySpark Silver Iceberg + quarantine
+-> EMR Serverless/PySpark Silver Iceberg + quarantine
 -> Cosmos `DbtTaskGroup` -> dbt-glue Gold Iceberg
 -> reconciliation
 -> snapshot-aware publication JSON
@@ -50,7 +50,7 @@ Bronze preserves source fields and adds source URI/file, year/month, checksum,
 run ID, ingestion timestamp, and the three identity fields. It replaces only
 the requested month partition and records count plus snapshot ID.
 
-Great Expectations remains a separate blocking Glue task. It checks only
+Great Expectations remains a separate blocking EMR Serverless Spark task. It checks only
 year-specific required columns, non-empty requested month, and identity inputs.
 It persists a concise summary and blocks Silver on failure.
 
@@ -129,8 +129,9 @@ automation is in scope.
 
 ## Deployment boundary
 
-Keep Glue 4.0, Terraform S3/Glue/Catalog/IAM/Athena resources, and the optional
-temporary EC2 Airflow runner with instance profile. Cosmos is limited to the
+Keep one persistent EMR Serverless Spark application with auto-start/auto-stop,
+Terraform S3/Glue Catalog/IAM/Athena resources, and the optional temporary EC2
+Airflow runner with instance profile. Cosmos is limited to the
 in-process dbt-glue `DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS
 management, dashboards, alarms, or extra buckets.
 

@@ -6,11 +6,11 @@ The active project is the NYC TLC HVFHV lakehouse described in
 | Area | Active paths | Responsibility |
 | --- | --- | --- |
 | Source contract | `etl/sources/nyc_hvfhs.py`, `scripts/fetch_source.py`, `scripts/upload_release_dataset.py` | Official filenames, local identity, immutable S3 landing |
-| Bronze | `etl/glue_jobs/nyc_bronze_ingestion.py` | One source month, ingestion metadata, guarded month write |
-| Quality gate | `etl/glue_jobs/nyc_great_expectations_checkpoint.py`, `etl/quality/` | Blocking structural and non-empty checks |
-| Silver/quarantine | `etl/glue_jobs/nyc_silver_transform.py`, `etl/transforms/` | Deterministic trip IDs, reason-coded validation, reconciliation |
+| Bronze | `etl/spark_jobs/nyc_bronze_ingestion.py` | One source month, ingestion metadata, guarded month write |
+| Quality gate | `etl/spark_jobs/nyc_great_expectations_checkpoint.py`, `etl/quality/` | Blocking structural and non-empty checks |
+| Silver/quarantine | `etl/spark_jobs/nyc_silver_transform.py`, `etl/transforms/` | Deterministic trip IDs, reason-coded validation, reconciliation |
 | Gold | `etl/dbt_project/` | Three dimensions, one fact, and two marts |
-| Publication | `etl/glue_jobs/nyc_quality_checkpoint.py`, `etl/glue_jobs/nyc_publish_manifest.py` | Post-Gold reconciliation and publication manifest |
+| Publication | `etl/spark_jobs/nyc_quality_checkpoint.py`, `etl/spark_jobs/nyc_publish_manifest.py` | Post-Gold reconciliation and publication manifest |
 | Orchestration | `etl/dags/nyc_hvfhs_monthly_dag.py` | Monthly DAG and sequential four-month trigger DAG |
 | Athena | `athena/`, `athena/sql/` | Read-only, Gold-only bounded queries and verification |
 | Infrastructure | `terraform/` | S3, Glue, IAM, Athena, optional bounded runner |

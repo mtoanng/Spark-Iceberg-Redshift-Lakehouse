@@ -60,14 +60,14 @@ expected schema and cost bound.
 | --- | --- | --- | --- | --- | --- | --- |
 | Source contract | `etl/sources/`, `etl/contracts/` | year/month and source rows/files | source identity, row identities, schema decisions | local files/mappings | none | invalid month, schema, hash, size, or identity input |
 | Source staging | `scripts/fetch_source.py`, `scripts/upload_release_dataset.py` | official URLs and local staging | immutable S3 objects and Airflow-variable JSON | public source/local files/S3 head | S3 landing/reference | partial download or changed object |
-| Catalog/table contract | `etl/iceberg/catalog.py`, initializer Glue job | warehouse URI and optional evolution flag | namespaces/table DDL | code constants | Glue Catalog/Iceberg table metadata | invalid DDL or unapproved evolution |
+| Catalog/table contract | `etl/iceberg/catalog.py`, initializer EMR Serverless job | warehouse URI and optional evolution flag | namespaces/table DDL | code constants | Glue Catalog/Iceberg table metadata | invalid DDL or unapproved evolution |
 | Orchestration | monthly/backfill Airflow DAG | manual params, Variables, environment | ordered remote tasks and XCom audit | Variables/XCom | Airflow metadata | missing config or task failure |
-| Bronze | Bronze Glue job | landed month, zones, immutable facts | Bronze partitions, run state, snapshot | S3 source, manifest | Bronze + Ops | identity mismatch/read/write failure |
-| Structural gate | GX Glue job | requested Bronze run | `ge_passed` or `ge_blocked` summary | Bronze + Ops | Ops | missing/empty structural batch |
-| Silver/quarantine | Silver Glue job | gated Bronze and zones | two classified partitions and snapshots | Bronze/Silver/Ops | Silver/quarantine/Ops | invalid policy or failed classification/write |
+| Bronze | Bronze EMR Serverless job | landed month, zones, immutable facts | Bronze partitions, run state, snapshot | S3 source, manifest | Bronze + Ops | identity mismatch/read/write failure |
+| Structural gate | GX EMR Serverless job | requested Bronze run | `ge_passed` or `ge_blocked` summary | Bronze + Ops | Ops | missing/empty structural batch |
+| Silver/quarantine | Silver EMR Serverless job | gated Bronze and zones | two classified partitions and snapshots | Bronze/Silver/Ops | Silver/quarantine/Ops | invalid policy or failed classification/write |
 | Gold | dbt-glue | canonical Silver and Bronze zones | three dimensions, fact, two marts, dbt result | Bronze/Silver/Gold | Gold + dbt results S3 | model or data-test failure |
-| Reconciliation | quality Glue job | manifest and actual layer tables | reconciled state and Gold count | Ops/Silver/quarantine/Gold | Ops | any monthly count difference |
-| Publication | publication Glue job + pure builder | reconciled row, table metadata, dbt results | durable canonical JSON and published state | Ops/Gold/Iceberg metadata/S3 | manifests S3 + Ops | missing table/location/snapshot/dbt success |
+| Reconciliation | reconciliation EMR Serverless job | manifest and actual layer tables | reconciled state and Gold count | Ops/Silver/quarantine/Gold | Ops | any monthly count difference |
+| Publication | publication EMR Serverless job + pure builder | reconciled row, table metadata, dbt results | durable canonical JSON and published state | Ops/Gold/Iceberg metadata/S3 | manifests S3 + Ops | missing table/location/snapshot/dbt success |
 | Athena serving | runner, verifier, four SQL artifacts | published Gold and parameters | query audit/result | Glue Gold + Gold S3 | Athena result prefix | schema, count, uniqueness, bound, or query failure |
 | Infrastructure | Terraform | approved variables and package | AWS resources and outputs | configuration/package | AWS control plane | plan/apply/IAM/resource error |
 | Evidence verification | rerun/evolution/teardown scripts | retained JSON or live read-only APIs | PASS/FAIL result | evidence/AWS APIs | none | incomplete or divergent evidence |
@@ -335,7 +335,7 @@ complete Silver and fact counts.
 ### Runtime behavior
 
 dbt runs on the temporary Airflow runner and requests a dbt-glue session using
-the configured role and Glue 4.0. The fact merge processes only the requested
+the configured role and the dbt-glue session. The fact merge processes only the requested
 month. `iceberg_expire_snapshots='False'` prevents dbt from treating snapshot
 expiration as part of this project.
 
@@ -441,7 +441,7 @@ The bucket and catalog databases are retained by bounded teardown.
 
 ## 15. Packaging and release-control component
 
-`package_glue_jobs.py` builds a deterministic zip:
+`package_spark_jobs.py` builds a deterministic zip:
 
 - includes Python beneath `etl/`, excluding DAGs and caches;
 - pins archive timestamps;

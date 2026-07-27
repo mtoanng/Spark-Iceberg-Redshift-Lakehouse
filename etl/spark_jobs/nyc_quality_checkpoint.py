@@ -1,22 +1,23 @@
 """Reconcile canonical Silver, quarantine, and Gold before publication."""
 
-import sys
-
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
+from etl.spark_jobs.arguments import parse_arguments
 
-args = getResolvedOptions(
-    sys.argv, ["JOB_NAME", "SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"]
+args = parse_arguments(
+    ["SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"],
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "SILVER_DATABASE": "silver",
+        "GOLD_DATABASE": "gold",
+        "OPS_DATABASE": "ops",
+    },
 )
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def _table(namespace: str, name: str) -> str:
@@ -26,10 +27,7 @@ def _table(namespace: str, name: str) -> str:
 
 
 def main() -> None:
-    context = GlueContext(SparkContext.getOrCreate())
-    job = Job(context)
-    job.init(args["JOB_NAME"], args)
-    spark = context.spark_session
+    spark = SparkSession.builder.getOrCreate()
     year, month = int(args["SOURCE_YEAR"]), int(args["SOURCE_MONTH"])
     run_id = args["INGESTION_RUN_ID"].replace("'", "''")
     manifest_table = _table("ops", "source_run_manifest")
@@ -71,7 +69,6 @@ def main() -> None:
         f"failure_message=NULL WHERE source_year={year} AND source_month={month} "
         f"AND ingestion_run_id='{run_id}'"
     )
-    job.commit()
 
 
 if __name__ == "__main__":

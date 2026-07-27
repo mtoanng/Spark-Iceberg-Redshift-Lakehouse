@@ -11,15 +11,9 @@ $targets = @(
     'aws_iam_role_policy.athena_gold_query',
     'aws_iam_role.airflow_runner',
     'aws_athena_workgroup.gold_query',
-    'aws_glue_job.initialize',
-    'aws_glue_job.bronze',
-    'aws_glue_job.great_expectations',
-    'aws_glue_job.silver',
-    'aws_glue_job.quality',
-    'aws_glue_job.publication',
-    'aws_iam_role_policy.glue_lakehouse',
-    'aws_iam_role_policy_attachment.glue_service',
-    'aws_iam_role.glue_service'
+    'aws_emrserverless_application.spark',
+    'aws_iam_role_policy.emr_serverless_lakehouse',
+    'aws_iam_role.emr_serverless_execution'
 )
 $arguments = @('plan', '-destroy', "-out=$PlanPath")
 $arguments += $targets | ForEach-Object { "-target=$_" }

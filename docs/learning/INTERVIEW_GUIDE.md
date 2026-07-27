@@ -11,7 +11,7 @@ recognize its file names. Read the technical guides first:
 ## 1. Thirty-second explanation
 
 This is a replayable monthly NYC TLC HVFHV lakehouse. It pins each source month
-by S3 URI, SHA-256, byte size, year, and month. Airflow 3 coordinates Glue 4.0
+by S3 URI, SHA-256, byte size, year, and month. Airflow 3 coordinates EMR Serverless
 Bronze, a structural Great Expectations gate, Silver plus reason-coded
 quarantine, dbt-glue Gold, count reconciliation, snapshot-aware publication,
 and a bounded read-only Athena smoke. Iceberg on S3 is canonical data, Glue
@@ -324,7 +324,7 @@ Athena behavior remains **NOT VERIFIED**.
 | --- | --- |
 | local contracts/tests/package/Terraform plan | developer/CI machine |
 | Airflow scheduler/operators/dbt CLI | temporary EC2 runner/container |
-| Bronze/GX/Silver/reconciliation/publication | Glue 4.0 jobs |
+| Bronze/GX/Silver/reconciliation/publication | EMR Serverless Spark jobs |
 | dbt Spark execution | dbt-glue session |
 | canonical data/metadata | Iceberg S3 + Glue Catalog |
 | serving query | Athena workgroup |

@@ -1,27 +1,27 @@
 """Mandatory Great Expectations checkpoint between Bronze and Silver."""
 
 import json
-import sys
-
 import great_expectations as gx
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
 from etl.contracts.nyc_hvfhs_identity import required_identity_columns
 from etl.sources.nyc_hvfhs import required_trip_columns
+from etl.spark_jobs.arguments import parse_arguments
 
 
-args = getResolvedOptions(
-    sys.argv, ["JOB_NAME", "SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"]
+args = parse_arguments(
+    ["SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"],
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "BRONZE_DATABASE": "bronze",
+        "OPS_DATABASE": "ops",
+    },
 )
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def _table(namespace: str, name: str) -> str:
@@ -56,10 +56,7 @@ def _persist(spark, status: str, summary: str) -> None:
 
 
 def main() -> None:
-    glue_context = GlueContext(SparkContext.getOrCreate())
-    job = Job(glue_context)
-    job.init(args["JOB_NAME"], args)
-    spark = glue_context.spark_session
+    spark = SparkSession.builder.getOrCreate()
     year, month, run_id = (
         int(args["SOURCE_YEAR"]),
         int(args["SOURCE_MONTH"]),
@@ -101,7 +98,6 @@ def main() -> None:
         raise ValueError(
             "Great Expectations blocking checkpoint failed; Silver will not run."
         )
-    job.commit()
 
 
 if __name__ == "__main__":

@@ -5,9 +5,9 @@ Replayable monthly NYC TLC HVFHV lakehouse:
 ```text
 immutable S3 landing
 -> Airflow 3
--> Glue 4.0 Bronze Iceberg
+-> EMR Serverless PySpark Bronze Iceberg
 -> structural Great Expectations gate
--> Glue 4.0 Silver + quarantine Iceberg
+-> EMR Serverless PySpark Silver + quarantine Iceberg
 -> Cosmos `DbtTaskGroup` + dbt-glue Gold
 -> reconciliation + snapshot-aware publication
 -> bounded read-only Athena
@@ -48,7 +48,7 @@ terraform -chdir=terraform validate
 Package Glue imports deterministically:
 
 ```powershell
-venv\Scripts\python.exe scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 ```
 
 Deployment and execution commands are in [docs/RUNBOOK.md](docs/RUNBOOK.md).

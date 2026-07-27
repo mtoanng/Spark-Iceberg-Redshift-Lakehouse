@@ -6,9 +6,9 @@ Read `docs/PROJECT2_BLUEPRINT_FINAL.md` before editing. Active architecture:
 
 ```text
 immutable NYC TLC HVFHV month + Taxi Zones
--> S3 landing -> Airflow 3 -> Glue 4.0/PySpark Bronze
+-> S3 landing -> Airflow 3 -> EMR Serverless/PySpark Bronze
 -> structural Great Expectations gate
--> Glue 4.0/PySpark Silver + quarantine
+-> EMR Serverless/PySpark Silver + quarantine
 -> Cosmos `DbtTaskGroup` -> dbt-glue Gold -> reconciliation -> snapshot-aware publication
 -> bounded read-only Athena
 ```

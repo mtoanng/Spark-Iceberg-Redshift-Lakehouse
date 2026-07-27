@@ -1,11 +1,11 @@
-"""Static contracts for remote-only Phase A Glue entry points."""
+"""Static contracts for remote-only Phase A EMR Serverless entry points."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 
-ROOT = Path(__file__).parents[2] / "etl" / "glue_jobs"
+ROOT = Path(__file__).parents[2] / "etl" / "spark_jobs"
 
 
 def _job(name: str) -> str:
@@ -38,6 +38,8 @@ def test_bronze_is_month_scoped_and_uses_manifest_guarded_partition_replacement(
     assert 'boto3.client("s3").head_object' in source
     assert "actual_checksum != expected_checksum" in source
     assert "ContentLength" in source
+    assert "SparkSession.builder.getOrCreate()" in source
+    assert "awsglue" not in source
 
 
 def test_ge_checkpoint_runs_before_silver_contract_and_persists_result() -> None:
@@ -53,6 +55,8 @@ def test_ge_checkpoint_runs_before_silver_contract_and_persists_result() -> None
     )
     assert "observed_invalid_row_count" not in source
     assert "BRONZE_ZONES_TABLE" not in source
+    assert "SparkSession.builder.getOrCreate()" in source
+    assert "awsglue" not in source
 
 
 def test_silver_filters_one_run_requires_ge_and_overwrites_month_partition() -> None:
@@ -65,6 +69,8 @@ def test_silver_filters_one_run_requires_ge_and_overwrites_month_partition() -> 
     assert "retrying_silver" in source
     assert 'failure_stage == "silver"' in source
     assert "spark_reason_expression" in source
+    assert "SparkSession.builder.getOrCreate()" in source
+    assert "awsglue" not in source
 
 
 def test_reconciliation_uses_correct_partition_columns_and_updates_manifest() -> None:
@@ -96,3 +102,13 @@ def test_publication_requires_reconciliation_and_writes_six_gold_tables() -> Non
         "mart_operator_metrics",
     ):
         assert table in contract
+
+
+def test_all_spark_entrypoints_use_standard_pyspark_runtime_apis() -> None:
+    for path in ROOT.glob("*.py"):
+        if path.name in {"__init__.py", "arguments.py"}:
+            continue
+        source = path.read_text(encoding="utf-8")
+        assert "SparkSession.builder.getOrCreate()" in source
+        assert "awsglue" not in source
+        assert "getResolvedOptions" not in source

@@ -1,11 +1,6 @@
-"""Remote-only Glue job that creates NYC Bronze and Silver Iceberg tables."""
+"""EMR Serverless PySpark entrypoint that creates NYC Iceberg tables."""
 
-import sys
-
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
 
 from etl.iceberg.catalog import (
     TABLE_SPECS,
@@ -13,21 +8,28 @@ from etl.iceberg.catalog import (
     schema_evolution_ddl,
     table_ddl,
 )
+from etl.spark_jobs.arguments import parse_arguments
 
 
-args = getResolvedOptions(sys.argv, ["JOB_NAME", "WAREHOUSE_URI"])
+args = parse_arguments(
+    ["WAREHOUSE_URI"],
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "BRONZE_DATABASE": "bronze",
+        "SILVER_DATABASE": "silver",
+        "OPS_DATABASE": "ops",
+        "GOLD_DATABASE": "gold",
+        "APPLY_2025_EVOLUTION": "false",
+    },
+)
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def main() -> None:
-    glue_context = GlueContext(SparkContext.getOrCreate())
-    job = Job(glue_context)
-    job.init(args["JOB_NAME"], args)
-    spark = glue_context.spark_session
+    spark = SparkSession.builder.getOrCreate()
 
     catalog = _optional_arg("CATALOG_NAME", "glue_catalog")
     namespace_map = {
@@ -48,8 +50,6 @@ def main() -> None:
             silver_database=namespace_map["silver"],
         ):
             spark.sql(ddl)
-
-    job.commit()
 
 
 if __name__ == "__main__":

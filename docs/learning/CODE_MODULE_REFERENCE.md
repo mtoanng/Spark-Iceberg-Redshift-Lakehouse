@@ -15,12 +15,12 @@ Paths under `legacy/` are archived and are not part of the active architecture.
 etl/contracts/nyc_hvfhs_identity.py
   -> etl/sources/nyc_hvfhs.py
   -> etl/transforms/nyc_hvfhs.py
-  -> etl/glue_jobs/nyc_bronze_ingestion.py
-  -> etl/glue_jobs/nyc_silver_transform.py
+  -> etl/spark_jobs/nyc_bronze_ingestion.py
+  -> etl/spark_jobs/nyc_silver_transform.py
 
 etl/contracts/nyc_hvfhs_quality.py
   -> etl/transforms/nyc_hvfhs.py
-  -> etl/glue_jobs/nyc_silver_transform.py
+  -> etl/spark_jobs/nyc_silver_transform.py
 
 etl/sources/nyc_hvfhs.py
   -> scripts/fetch_source.py
@@ -29,14 +29,14 @@ etl/sources/nyc_hvfhs.py
   -> etl/dags/nyc_hvfhs_monthly_dag.py
 
 etl/iceberg/catalog.py
-  -> etl/glue_jobs/initialize_nyc_iceberg_tables.py
+  -> etl/spark_jobs/initialize_nyc_iceberg_tables.py
 
 etl/publication/nyc_hvfhs.py
-  -> etl/glue_jobs/nyc_publish_manifest.py
+  -> etl/spark_jobs/nyc_publish_manifest.py
 
 silver Iceberg
   -> etl/dbt_project/*
-  -> etl/glue_jobs/nyc_quality_checkpoint.py
+  -> etl/spark_jobs/nyc_quality_checkpoint.py
   -> publication
   -> athena/*
 ```
@@ -358,7 +358,7 @@ Glue files import `awsglue` and Spark and therefore are remote entrypoints.
 Tests inspect them statically or exercise their pure dependencies; local unit
 tests do not claim to execute Glue.
 
-### `etl/glue_jobs/initialize_nyc_iceberg_tables.py`
+### `etl/spark_jobs/initialize_nyc_iceberg_tables.py`
 
 Required argument: `JOB_NAME`, `WAREHOUSE_URI`.
 
@@ -373,7 +373,7 @@ Execution:
 4. optionally execute only approved evolution DDL;
 5. commit.
 
-### `etl/glue_jobs/nyc_bronze_ingestion.py`
+### `etl/spark_jobs/nyc_bronze_ingestion.py`
 
 Required arguments:
 
@@ -399,7 +399,7 @@ and zones with partition replacement, captures a snapshot, and updates Ops.
 Failure handling truncates messages to the manifest field boundary and
 re-raises so Airflow sees a failed task.
 
-### `etl/glue_jobs/nyc_great_expectations_checkpoint.py`
+### `etl/spark_jobs/nyc_great_expectations_checkpoint.py`
 
 Required arguments: `JOB_NAME`, year, month, run ID.
 
@@ -412,7 +412,7 @@ Key helpers:
 ephemeral GX Spark batch, validates, checks non-empty, persists state, and
 raises on block.
 
-### `etl/glue_jobs/nyc_silver_transform.py`
+### `etl/spark_jobs/nyc_silver_transform.py`
 
 Required arguments: `JOB_NAME`, year, month, run ID.
 
@@ -432,7 +432,7 @@ The current 2025 column branch is post-baseline code and remains
 **NOT VERIFIED** in Glue. Any change to it must retain the rule that 2024 does
 not invent a source value and 2025 uses the evolved nullable column.
 
-### `etl/glue_jobs/nyc_quality_checkpoint.py`
+### `etl/spark_jobs/nyc_quality_checkpoint.py`
 
 The historical filename says “quality checkpoint”; its active role is
 reconciliation.
@@ -441,7 +441,7 @@ It requires `silver_published`, counts month-scoped Silver, quarantine, and
 fact rows, calculates four named differences, and changes state to
 `reconciled` only when all differences equal zero.
 
-### `etl/glue_jobs/nyc_publish_manifest.py`
+### `etl/spark_jobs/nyc_publish_manifest.py`
 
 Required arguments: `JOB_NAME`, year, month, run ID, `DBT_RESULT_URI`.
 
@@ -478,13 +478,13 @@ Monthly operators:
 | Task | Operator | Remote target |
 | --- | --- | --- |
 | `prepare_month` | `PythonOperator` | local runner Python |
-| `bronze_ingestion` | `GlueJobOperator` | Bronze Glue job |
-| `great_expectations_checkpoint` | `GlueJobOperator` | GX Glue job |
-| `silver_transform` | `GlueJobOperator` | Silver Glue job |
+| `bronze_ingestion` | `EmrServerlessStartJobOperator` | Bronze EMR Serverless job |
+| `great_expectations_checkpoint` | `EmrServerlessStartJobOperator` | GX EMR Serverless job |
+| `silver_transform` | `EmrServerlessStartJobOperator` | Silver EMR Serverless job |
 | `dbt_build` | Cosmos `DbtTaskGroup` Watcher | dbt-glue build/tests and durable result callback |
 | `dbt_result_artifact` | `PythonOperator` | require the callback-uploaded dbt result before reconciliation |
-| `reconciliation` | `GlueJobOperator` | reconciliation Glue job |
-| `publication_manifest` | `GlueJobOperator` | publication Glue job |
+| `reconciliation` | `EmrServerlessStartJobOperator` | reconciliation EMR Serverless job |
+| `publication_manifest` | `EmrServerlessStartJobOperator` | publication EMR Serverless job |
 | `athena_smoke` | `BashOperator` | Python Athena verifier when enabled |
 
 The four backfill trigger operators set `wait_for_completion=True` and are
@@ -642,7 +642,7 @@ and lookup plans. `_upload_immutable()` implements S3 idempotence and
 verification. `main()` prints both object evidence and Airflow Variables;
 mutation requires explicit `--execute`.
 
-### `scripts/package_glue_jobs.py`
+### `scripts/package_spark_jobs.py`
 
 Builds deterministic Glue code and runtime metadata. Terraform reads the
 resulting file, so package creation precedes Terraform plan/validate.
@@ -717,7 +717,7 @@ full public-access block.
 
 Creates exactly `bronze`, `silver`, `ops`, and `gold`.
 
-### `terraform/glue_jobs.tf`
+### `terraform/emr_serverless.tf`
 
 Defines common Iceberg Spark arguments, uploads package and six scripts, and
 creates six Glue 4.0 jobs:
