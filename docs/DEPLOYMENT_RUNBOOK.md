@@ -8,7 +8,8 @@ AWS CLI default credential chain; never place keys in repository files.
 
 ## Required values
 
-Set `AWS_REGION`, `TF_VAR_s3_bucket_name`, `GLUE_ROLE_ARN`, `S3_GOLD_PATH`,
+Set `AWS_REGION`, `TF_VAR_s3_bucket_name`, `AWS_ACCOUNT_ID`,
+`REDSHIFT_HOST`, `REDSHIFT_WORKGROUP_NAME`, `REDSHIFT_DATABASE`,
 `GLUE_GOLD_DATABASE`, and `ATHENA_WORKGROUP`. Copy
 `terraform/terraform.tfvars.example` to an untracked `terraform.tfvars` and
 replace placeholders. Keep `athena_bytes_scanned_cutoff` at 100 MiB unless a
@@ -25,9 +26,10 @@ terraform -chdir=terraform plan -out one-month.tfplan
 ```
 
 Expected: package check succeeds; Terraform reports no validation errors; the
-plan contains only this project's private S3, Glue, IAM, Athena, and optional
-runner resources. Stop if the plan replaces a bucket/database or enables
-public access. The plan file is local-only and must not be committed.
+plan contains only this project's private S3, Glue Catalog, EMR Serverless,
+Redshift Serverless, IAM, Athena, and optional runner resources. Stop if the
+plan replaces a bucket/database or enables public access. The plan file is
+local-only and must not be committed.
 
 ## 2. Create the reviewed resources
 
@@ -59,18 +61,23 @@ must report `uploaded` or `already-present`; stop on any identity conflict.
 
 ## 4. Initialize Iceberg
 
-Get the provisioned names and run the initializer once:
+Get the provisioned EMR Serverless application ID, execution role, Spark
+package URI, and script-prefix URI. Submit
+`initialize_nyc_iceberg_tables.py` once with the same Spark/Iceberg
+configuration assembled in `terraform/emr_serverless.tf`, then poll it:
 
 ```powershell
 terraform -chdir=terraform output
-aws glue start-job-run --job-name <initializer-job> --region $env:AWS_REGION
-aws glue get-job-run --job-name <initializer-job> --run-id <run-id> --region $env:AWS_REGION
+aws emr-serverless start-job-run --application-id <application-id> --execution-role-arn <role-arn> --job-driver file://build/initializer-job-driver.json --region $env:AWS_REGION
+aws emr-serverless get-job-run --application-id <application-id> --job-run-id <job-run-id> --region $env:AWS_REGION
 ```
 
-Poll `get-job-run` until `JobRunState` is `SUCCEEDED`. Expected: Bronze,
+The reviewed job-driver JSON must use the uploaded initializer as `entryPoint`,
+the uploaded package in `--py-files`, and the exact Glue Catalog/Iceberg Spark
+settings from Terraform. Poll until `state` is `SUCCESS`. Expected: Bronze,
 Silver, quarantine, and run-manifest tables exist as Iceberg format v2 tables
 using Snappy and `source_year`/`source_month` partitions. Stop and capture the
-CloudWatch error when the state is `FAILED`, `ERROR`, `TIMEOUT`, or `STOPPED`.
+CloudWatch error for any terminal non-success state.
 
 ## 5. Configure the bounded Airflow runner
 
@@ -82,8 +89,10 @@ endpoints; Terraform intentionally does not create shared networking.
 
 Copy `.env.cloud.example` to an untracked `build/airflow.env`. Fill values from
 `terraform output` and the `airflow_variables` section emitted by the upload
-script. In particular, set both direct dbt variables `GLUE_ROLE_ARN` and
-`S3_GOLD_PATH`, plus the month-specific SHA-256 and byte-size variables.
+script. In particular, set the Redshift endpoint, workgroup, database, AWS
+account/region, and month-specific SHA-256 and byte-size variables. The runner
+uses its instance profile to obtain temporary Redshift database credentials;
+no database password belongs in this file.
 
 On that remote machine from a fresh repository checkout:
 
@@ -122,16 +131,19 @@ Verify each task in order:
 3. `great_expectations_checkpoint`: required columns and non-empty month pass.
 4. `silver_transform`: valid rows plus reason-coded quarantine.
 5. `dbt_build`: Cosmos Watcher producer and model watchers complete six Gold
-   models/tests using the explicit month variables.
+   models/tests in Redshift using the explicit month variables.
 6. `dbt_result_artifact`: a non-empty, SHA-256-tagged complete
    `run_results.json` exists at the deterministic publication-prefix URI.
-7. `reconciliation`: Bronze = Silver + quarantine and fact = Silver.
-8. `publication_manifest`: deterministic manifest URI and `published` status.
-9. `athena_smoke`: expected Gold tables/columns, non-empty filtered result,
-   and bytes scanned below the configured cutoff.
+7. `reconciliation`, 8. `publication_manifest`, and 9. `athena_smoke` preserve
+   their ordering but still target the former Glue Gold Iceberg contract.
 
-Stop at the first failure. Preserve the run ID, Glue logs, manifest state, and
-Athena query ID before retrying. A rerun of the same identity should reuse the
+Stop after step 6 for this codebase-ready phase. Do not claim steps 7-9 against
+Redshift-managed Gold until their adapters are migrated in a separately scoped
+change. A failed dbt model or test must still leave all three downstream tasks
+blocked by Airflow's default all-success dependency behavior.
+
+Stop at the first failure. Preserve the run ID, EMR/Redshift logs, manifest
+state, and any query ID before retrying. A rerun of the same identity should reuse the
 stable run and safely replace only the requested month. A changed URI,
 checksum, or size must be rejected; `force` does not authorize source change.
 
@@ -140,7 +152,7 @@ checksum, or size must be rejected; `force` does not authorize source change.
 Copy `docs/CLOUD_EVIDENCE_TEMPLATE.md` to a dated Markdown record under
 `docs/evidence/final-e2e/`. Record counts, validation result, Gold tests,
 publication object, query bytes, retry evidence, and independent business totals.
-Use only one month, stop idle Glue/Airflow compute, keep Athena filters, and
+Use only one month, stop idle EMR/Redshift/Airflow compute, keep Athena filters, and
 review billing alerts before attempting the four-month backfill.
 
 ## 8. Stop the runner and teardown

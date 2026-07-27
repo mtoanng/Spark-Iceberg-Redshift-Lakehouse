@@ -13,10 +13,10 @@ recognize its file names. Read the technical guides first:
 This is a replayable monthly NYC TLC HVFHV lakehouse. It pins each source month
 by S3 URI, SHA-256, byte size, year, and month. Airflow 3 coordinates EMR Serverless
 Bronze, a structural Great Expectations gate, Silver plus reason-coded
-quarantine, dbt-glue Gold, count reconciliation, snapshot-aware publication,
-and a bounded read-only Athena smoke. Iceberg on S3 is canonical data, Glue
-Data Catalog is canonical metadata, and every served month has durable JSON
-evidence before it is marked published.
+quarantine, Redshift external schemas, and dbt-redshift managed Gold. Cosmos
+retains the dbt evidence and preserves the downstream reconciliation,
+publication, and Athena ordering. The existing downstream adapters still
+expect Gold Iceberg and remain outside this migration phase.
 
 ## 2. Ninety-second explanation
 
@@ -31,12 +31,13 @@ identity metadata. `row_id` is the exact-row SHA-256 and the only deduplication
 and dbt merge key. `business_trip_key` is a probable-trip investigation key and
 never removes data.
 
-A Great Expectations Glue job checks only structural promotability: required
+A Great Expectations Spark job checks only structural promotability: required
 year-specific fields, identity inputs, and a non-empty month. Silver then owns
 row-level validation, exact deduplication, derived fields, and deterministic
 quarantine reasons. It must classify every Bronze row exactly once.
 
-dbt-glue produces exactly three dimensions, one fact, and two marts.
+dbt-redshift produces exactly three dimensions, one fact, and two marts in the
+local Redshift `gold` schema.
 Reconciliation proves Bronze equals Silver plus quarantine and the monthly
 fact equals Silver. Publication then records source identity, layer counts and
 snapshots, all six Gold table locations/counts/snapshots, and retained dbt
@@ -102,7 +103,7 @@ using `row_id`; dimensions and marts rebuild over bounded canonical data.
 dbt tests uniqueness, not-null fields, relationships, and Silver/fact
 reconciliation. Its `run_results.json` is copied to durable S3.
 
-The Glue reconciliation job independently recounts the actual month. It moves
+The EMR Serverless reconciliation job independently recounts the actual month. It moves
 the run to `reconciled` only when every count difference is zero.
 
 Publication requires that state, resolves all required Iceberg metadata,
@@ -180,8 +181,8 @@ stable row identity.
 Spark owns source-scale ingestion/classification; dbt expresses analytical
 model dependencies, grains, and tests clearly.
 
-Trade-off: the runner must support dbt-glue sessions and retain their result
-artifacts.
+Trade-off: the runner must reach the private Redshift workgroup, obtain IAM
+database credentials, and retain dbt result artifacts.
 
 ### Why publish after reconciliation?
 
@@ -325,8 +326,9 @@ Athena behavior remains **NOT VERIFIED**.
 | local contracts/tests/package/Terraform plan | developer/CI machine |
 | Airflow scheduler/operators/dbt CLI | temporary EC2 runner/container |
 | Bronze/GX/Silver/reconciliation/publication | EMR Serverless Spark jobs |
-| dbt Spark execution | dbt-glue session |
-| canonical data/metadata | Iceberg S3 + Glue Catalog |
+| dbt SQL execution | Redshift Serverless workgroup |
+| upstream data/metadata | Iceberg S3 + Glue Catalog external schemas |
+| Gold data | Redshift-managed relations |
 | serving query | Athena workgroup |
 
 ### Where do credentials come from?

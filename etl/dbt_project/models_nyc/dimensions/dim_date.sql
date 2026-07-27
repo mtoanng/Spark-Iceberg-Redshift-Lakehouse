@@ -1,4 +1,4 @@
-{{ config(materialized='table', file_format='iceberg') }}
+{{ config(materialized='table') }}
 
 with dates as (
     select distinct pickup_date as calendar_date
@@ -7,11 +7,11 @@ with dates as (
 )
 
 select
-    cast(date_format(calendar_date, 'yyyyMMdd') as int) as date_key,
+    cast(to_char(calendar_date, 'YYYYMMDD') as integer) as date_key,
     calendar_date,
-    year(calendar_date) as calendar_year,
-    month(calendar_date) as calendar_month,
-    day(calendar_date) as day_of_month,
-    dayofweek(calendar_date) as day_of_week,
-    date_format(calendar_date, 'E') as day_name
+    cast(extract(year from calendar_date) as integer) as calendar_year,
+    cast(extract(month from calendar_date) as integer) as calendar_month,
+    cast(extract(day from calendar_date) as integer) as day_of_month,
+    cast(extract(dow from calendar_date) as integer) + 1 as day_of_week,
+    trim(to_char(calendar_date, 'Dy')) as day_name
 from dates

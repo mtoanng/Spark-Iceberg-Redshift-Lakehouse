@@ -5,7 +5,7 @@ resource "aws_iam_role" "emr_serverless_execution" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = ["emr-serverless.amazonaws.com", "glue.amazonaws.com"] }
+      Principal = { Service = "emr-serverless.amazonaws.com" }
       Action    = "sts:AssumeRole"
     }]
   })
@@ -172,18 +172,13 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         Resource = aws_emrserverless_application.spark.arn
       },
       {
-        Sid    = "RunDbtGlueInteractiveSession"
+        Sid    = "ConnectToRedshiftServerlessForDbt"
         Effect = "Allow"
-        Action = [
-          "glue:CreateSession",
-          "glue:DeleteSession",
-          "glue:GetSession",
-          "glue:GetStatement",
-          "glue:RunStatement",
-          "glue:StopSession",
-          "glue:TagResource"
+        Action = ["redshift-serverless:GetCredentials", "redshift-serverless:GetWorkgroup", "redshift-serverless:GetNamespace"]
+        Resource = [
+          aws_redshiftserverless_workgroup.gold.arn,
+          aws_redshiftserverless_namespace.gold.arn
         ]
-        Resource = "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:session/${var.project_name}-${var.environment}-*"
       },
       {
         Sid      = "PassEmrServerlessRole"
@@ -193,44 +188,6 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         Condition = {
           StringEquals = { "iam:PassedToService" = "emr-serverless.amazonaws.com" }
         }
-      },
-      {
-        Sid      = "PassRoleToDbtGlueSession"
-        Effect   = "Allow"
-        Action   = ["iam:PassRole"]
-        Resource = aws_iam_role.emr_serverless_execution.arn
-        Condition = {
-          StringEquals = { "iam:PassedToService" = "glue.amazonaws.com" }
-        }
-      },
-      {
-        Sid    = "ManageGoldCatalogForDbt"
-        Effect = "Allow"
-        Action = [
-          "glue:CreateTable",
-          "glue:DeleteTable",
-          "glue:GetDatabase",
-          "glue:GetTable",
-          "glue:GetTables",
-          "glue:UpdateTable"
-        ]
-        Resource = [
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/gold",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/gold/*"
-        ]
-      },
-      {
-        Sid    = "ManageGoldObjectsForDbt"
-        Effect = "Allow"
-        Action = [
-          "s3:AbortMultipartUpload",
-          "s3:DeleteObject",
-          "s3:GetObject",
-          "s3:ListMultipartUploadParts",
-          "s3:PutObject"
-        ]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/gold/*"
       },
       {
         Sid    = "ReadLandingAndReference"

@@ -39,6 +39,16 @@ def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
     assert "aws_emrserverless_application" in terraform
     assert "--py-files" in terraform
     assert 'aws_glue_catalog_database" "namespace' in terraform
+    assert terraform.count('resource "aws_redshiftserverless_namespace"') == 1
+    assert terraform.count('resource "aws_redshiftserverless_workgroup"') == 1
+    assert terraform.count('resource "aws_iam_role" "redshift_spectrum"') == 1
+    assert "manage_admin_password = true" in terraform
+    assert "default_iam_role_arn" in terraform
+    assert "warehouse_prefix}/bronze/*" in terraform
+    assert "warehouse_prefix}/silver/*" in terraform
+    assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS bronze_external" in terraform
+    assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS silver_external" in terraform
+    assert "CREATE SCHEMA IF NOT EXISTS gold" in terraform
 
 
 def test_e2e_release_is_four_months_and_teardown_has_no_apply() -> None:

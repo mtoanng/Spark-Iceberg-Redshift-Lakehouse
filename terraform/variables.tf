@@ -72,6 +72,12 @@ variable "spark_package_path" {
   default     = "build/nyc_spark_jobs.zip"
 }
 
+variable "redshift_database_name" {
+  type        = string
+  description = "Database created inside the bounded Redshift Serverless namespace."
+  default     = "lakehouse"
+}
+
 variable "spark_package_s3_key" {
   type        = string
   description = "S3 key for the shared EMR Serverless Python package."

@@ -143,13 +143,16 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert monthly.tasks[4].downstream_task_ids == {"dbt_result_artifact"}
     assert monthly.tasks[5].downstream_task_ids == {"reconciliation"}
     assert monthly.tasks[6].downstream_task_ids == {"publication_manifest"}
+    assert "trigger_rule" not in monthly.tasks[5].kwargs
+    assert "trigger_rule" not in monthly.tasks[6].kwargs
+    assert "trigger_rule" not in monthly.tasks[7].kwargs
     assert monthly.tasks[7].downstream_task_ids == {"athena_smoke"}
     dbt_group = monthly.tasks[4]
     assert (
         dbt_group.kwargs["project_config"].kwargs["dbt_project_path"].name
         == "dbt_project"
     )
-    assert dbt_group.kwargs["profile_config"].kwargs["target_name"] == "glue"
+    assert dbt_group.kwargs["profile_config"].kwargs["target_name"] == "redshift"
     assert dbt_group.kwargs["render_config"].kwargs["test_behavior"] == "build"
     assert dbt_group.kwargs["execution_config"].kwargs["execution_mode"] == "watcher"
     assert (

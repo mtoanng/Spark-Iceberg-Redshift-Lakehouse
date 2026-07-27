@@ -9,15 +9,16 @@ immutable NYC TLC HVFHV month + Taxi Zones
 -> S3 landing -> Airflow 3 -> EMR Serverless/PySpark Bronze
 -> structural Great Expectations gate
 -> EMR Serverless/PySpark Silver + quarantine
--> Cosmos `DbtTaskGroup` -> dbt-glue Gold -> reconciliation -> snapshot-aware publication
+-> Redshift Serverless external schemas -> Cosmos `DbtTaskGroup`
+-> dbt-redshift managed Gold -> reconciliation -> snapshot-aware publication
 -> bounded read-only Athena
 ```
 
 The current temporary EC2/instance-profile Airflow runner remains the deployment
 model for the first baseline. Cosmos is permitted only as the in-process
-`DbtTaskGroup` integration for dbt-glue; do not add MWAA, EKS, Glue 5.1, Lake
-Formation, ML/AI, dashboards, another query engine, or an Iceberg maintenance
-suite.
+`DbtTaskGroup` integration for dbt-redshift; do not add MWAA, EKS, Glue 5.1,
+Lake Formation, ML/AI, dashboards, another query engine, or an Iceberg
+maintenance suite.
 
 ## Locked semantics
 
@@ -52,9 +53,10 @@ without separate approval. Preserve unrelated user changes.
 
 Run all credential-independent tests, Python formatting/lint/compile, dbt at
 the highest supported level, DAG topology checks, Terraform fmt/init/validate,
-packaging, secret scan, and documentation links. Mark live Glue, Airflow, S3,
-Iceberg snapshot, Athena, retry/clear/rerun, schema-evolution, and teardown
-evidence `NOT VERIFIED` until a retained AWS run exists.
+packaging, secret scan, and documentation links. Mark live Airflow, S3, EMR
+Serverless, Redshift Serverless, Iceberg snapshot, Athena, retry/clear/rerun,
+schema-evolution, and teardown evidence `NOT VERIFIED` until a retained AWS run
+exists.
 
 End work with baseline failures, decisions, files, cleanup, exact commands,
 PASS/FAIL/NOT VERIFIED criteria, identity/rerun/publication evidence, remaining
