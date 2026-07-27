@@ -8,7 +8,7 @@ immutable S3 landing
 -> Glue 4.0 Bronze Iceberg
 -> structural Great Expectations gate
 -> Glue 4.0 Silver + quarantine Iceberg
--> dbt-glue Gold
+-> Cosmos `DbtTaskGroup` + dbt-glue Gold
 -> reconciliation + snapshot-aware publication
 -> bounded read-only Athena
 ```

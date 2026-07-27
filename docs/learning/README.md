@@ -69,7 +69,7 @@ generic platform. The first controlled release is one immutable 2024 month.
 Only after that month succeeds does the existing four-month companion DAG run
 four consecutive monthly DAGs.
 
-The baseline deliberately does not include MWAA, Cosmos, EKS, Lake Formation,
+The baseline deliberately does not include MWAA, EKS, Lake Formation,
 Glue 5.1, another query engine, dashboards, ML/AI, or an Iceberg maintenance
 suite. The optional temporary EC2 runner with an instance profile remains the
 Airflow deployment model. This boundary keeps cost, permissions, recovery,
@@ -112,7 +112,8 @@ prepare_month
 -> bronze_ingestion
 -> great_expectations_checkpoint
 -> silver_transform
--> dbt_build
+-> Cosmos `dbt_build` task group
+-> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
 -> athena_smoke
@@ -430,18 +431,21 @@ validation status remains passed. It:
 11. replaces requested Silver and quarantine partitions;
 12. captures both snapshot IDs and changes state to `silver_published`.
 
-### Step 5: `dbt_build`
+### Step 5: Cosmos `dbt_build` and `dbt_result_artifact`
 
-The Airflow runner changes into `etl/dbt_project` and runs `dbt build` against
-the Glue target with explicit month variables. dbt:
+Cosmos `DbtTaskGroup` runs one Watcher-mode `dbt build` producer against the
+Glue target with explicit month variables. The resulting model watchers expose
+each model/test outcome in Airflow while dbt:
 
 - builds/tests three dimensions;
 - merges the requested month into `fct_trips` by `row_id`;
 - rebuilds/tests two marts;
 - executes the singular fact-to-Silver reconciliation test.
 
-After success, Airflow copies `target/run_results.json` to the publication S3
-prefix and pushes that durable URI through XCom.
+After a successful full producer run, its Cosmos callback copies
+`target/run_results.json` to the deterministic publication S3 prefix. The
+separate `dbt_result_artifact` task requires that object to be non-empty and
+SHA-256-tagged, then returns its durable URI through XCom.
 
 ### Step 6: `reconciliation`
 
@@ -624,6 +628,6 @@ next task.
    investigation decision?
 2. How do Great Expectations, Silver quarantine, reconciliation, and
    publication each prevent a different failure from becoming served data?
-3. After `dbt_build` succeeds, what exact evidence must exist before the
+3. After the Cosmos `dbt_build` group succeeds, what exact evidence must exist before the
    operational manifest may become `published`, and what does Athena verify
    afterward?

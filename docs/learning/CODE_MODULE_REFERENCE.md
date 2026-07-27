@@ -481,7 +481,8 @@ Monthly operators:
 | `bronze_ingestion` | `GlueJobOperator` | Bronze Glue job |
 | `great_expectations_checkpoint` | `GlueJobOperator` | GX Glue job |
 | `silver_transform` | `GlueJobOperator` | Silver Glue job |
-| `dbt_build` | `BashOperator` | dbt-glue then S3 copy |
+| `dbt_build` | Cosmos `DbtTaskGroup` Watcher | dbt-glue build/tests and durable result callback |
+| `dbt_result_artifact` | `PythonOperator` | require the callback-uploaded dbt result before reconciliation |
 | `reconciliation` | `GlueJobOperator` | reconciliation Glue job |
 | `publication_manifest` | `GlueJobOperator` | publication Glue job |
 | `athena_smoke` | `BashOperator` | Python Athena verifier when enabled |
@@ -491,6 +492,20 @@ chained, so month N+1 does not start until month N finishes.
 
 Primary verification: `tests/unit/test_nyc_airflow_dag.py` stubs Airflow
 modules, imports the DAG, and asserts exact task topology and properties.
+
+### `etl/orchestration/nyc_hvfhs_cosmos.py`
+
+**Purpose:** make Cosmos' temporary dbt working directory safe for the
+publication contract.
+
+- `archive_dbt_run_results()` is the Watcher producer callback. It reads the
+  complete `target/run_results.json`, accepts only non-empty all-success/pass
+  results with an invocation ID, then uploads it with SHA-256 metadata.
+- `require_dbt_result_artifact()` is the explicit downstream handoff. It heads
+  the deterministic S3 object and returns its URI only when its size and
+  checksum metadata are present.
+- `tests/unit/test_nyc_cosmos_dbt_artifacts.py` proves the callback/verification
+  pair without AWS.
 
 ## 13. dbt project
 
@@ -811,5 +826,6 @@ evidence.
    adapters, and why is that separation useful?
 2. If Python and Spark generate different `row_id` values, which tests and
    downstream components fail or become unsafe?
-3. Why does `nyc_publish_manifest.py` consume an S3 `run_results.json` instead
-   of trusting that the Airflow `dbt_build` task once reported success?
+3. Why does `nyc_publish_manifest.py` consume a callback-uploaded S3
+`run_results.json` instead of trusting that the Cosmos `dbt_build` group once
+reported success?

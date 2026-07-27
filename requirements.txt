@@ -19,6 +19,7 @@ dbt-glue>=1.7.0
 apache-airflow>=3.0,<4
 apache-airflow-providers-amazon>=9.0,<10
 apache-airflow-providers-apache-spark>=4.3.0
+astronomer-cosmos>=1.15.0,<2
 
 # HTTP client
 requests>=2.31.0

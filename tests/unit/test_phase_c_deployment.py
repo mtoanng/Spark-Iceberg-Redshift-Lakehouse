@@ -52,3 +52,8 @@ def test_cloud_environment_has_no_static_key_contract() -> None:
     assert "AWS_SECRET_ACCESS_KEY" not in env
     assert "ATHENA_WORKGROUP" in env
     assert "AIRFLOW_VAR_NYC_GREAT_EXPECTATIONS_JOB_NAME" in env
+
+
+def test_airflow_runtime_pins_cosmos_for_the_dbt_task_group() -> None:
+    requirements = (ROOT / "requirements-airflow.txt").read_text(encoding="utf-8")
+    assert "astronomer-cosmos==1.15.0" in requirements

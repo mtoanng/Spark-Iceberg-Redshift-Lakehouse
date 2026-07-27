@@ -360,20 +360,22 @@ one classified frame
 
 This is where row-level business behavior belongs.
 
-### `dbt_build`
+### Cosmos `dbt_build` and `dbt_result_artifact`
 
-The command runs on EC2, but transformation runs through dbt-glue. The explicit
-vars bind the fact merge to the current month. A successful build must also
+Cosmos runs a single Watcher-mode dbt producer on EC2, while dbt-glue performs
+the transformation. Model watchers make the build visible in Airflow. Explicit
+vars bind the fact merge to the current month, and a successful build must also
 pass dbt tests.
 
-Airflow then copies:
+The producer callback then copies the complete artifact, and the downstream
+`dbt_result_artifact` task verifies that it exists and has SHA-256 metadata:
 
 ```text
 etl/dbt_project/target/run_results.json
 -> s3://<bucket>/manifests/dbt-results/year=YYYY/month=MM/<run-id>.json
 ```
 
-The resulting S3 URI is XCom output for publication.
+The verified S3 URI is XCom output for publication.
 
 ### `reconciliation`
 

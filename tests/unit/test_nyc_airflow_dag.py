@@ -49,6 +49,14 @@ def _fake_airflow_modules(monkeypatch):
             self.downstream_task_ids.add(other.task_id)
             return other
 
+    class FakeDbtTaskGroup(FakeOperator):
+        def __init__(self, *, group_id, **kwargs):
+            super().__init__(task_id=group_id, **kwargs)
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
     class FakeVariable:
         @staticmethod
         def get(_):
@@ -81,6 +89,18 @@ def _fake_airflow_modules(monkeypatch):
         "airflow.providers.amazon.aws.operators.glue": types.SimpleNamespace(
             GlueJobOperator=FakeOperator
         ),
+        "cosmos": types.SimpleNamespace(DbtTaskGroup=FakeDbtTaskGroup),
+        "cosmos.config": types.SimpleNamespace(
+            ExecutionConfig=FakeConfig,
+            ProfileConfig=FakeConfig,
+            ProjectConfig=FakeConfig,
+            RenderConfig=FakeConfig,
+        ),
+        "cosmos.constants": types.SimpleNamespace(
+            ExecutionMode=types.SimpleNamespace(WATCHER="watcher"),
+            InvocationMode=types.SimpleNamespace(SUBPROCESS="subprocess"),
+            TestBehavior=types.SimpleNamespace(BUILD="build"),
+        ),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -101,6 +121,7 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
         "great_expectations_checkpoint",
         "silver_transform",
         "dbt_build",
+        "dbt_result_artifact",
         "reconciliation",
         "publication_manifest",
         "athena_smoke",
@@ -111,17 +132,37 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion"}
     assert monthly.tasks[1].downstream_task_ids == {"great_expectations_checkpoint"}
     assert all(
-        monthly.tasks[index].kwargs["aws_conn_id"] is None
-        for index in (1, 2, 3, 5, 6)
+        monthly.tasks[index].kwargs["aws_conn_id"] is None for index in (1, 2, 3, 6, 7)
     )
     assert monthly.tasks[2].downstream_task_ids == {"silver_transform"}
-    assert monthly.tasks[4].downstream_task_ids == {"reconciliation"}
-    assert monthly.tasks[5].downstream_task_ids == {"publication_manifest"}
-    assert monthly.tasks[6].downstream_task_ids == {"athena_smoke"}
-    assert "source_year" in monthly.tasks[4].kwargs["bash_command"]
-    assert "source_month" in monthly.tasks[4].kwargs["bash_command"]
-    assert "--max-scanned-bytes" in monthly.tasks[7].kwargs["bash_command"]
-    assert "AWS_REGION" in monthly.tasks[7].kwargs["env"]
+    assert monthly.tasks[4].downstream_task_ids == {"dbt_result_artifact"}
+    assert monthly.tasks[5].downstream_task_ids == {"reconciliation"}
+    assert monthly.tasks[6].downstream_task_ids == {"publication_manifest"}
+    assert monthly.tasks[7].downstream_task_ids == {"athena_smoke"}
+    dbt_group = monthly.tasks[4]
+    assert (
+        dbt_group.kwargs["project_config"].kwargs["dbt_project_path"].name
+        == "dbt_project"
+    )
+    assert dbt_group.kwargs["profile_config"].kwargs["target_name"] == "glue"
+    assert dbt_group.kwargs["render_config"].kwargs["test_behavior"] == "build"
+    assert dbt_group.kwargs["execution_config"].kwargs["execution_mode"] == "watcher"
+    assert (
+        "archive_dbt_run_results"
+        in dbt_group.kwargs["execution_config"].kwargs["setup_operator_args"][
+            "callback"
+        ]
+    )
+    assert set(dbt_group.kwargs["operator_args"]["vars"]) == {
+        "source_year",
+        "source_month",
+    }
+    assert (
+        "dbt_result_artifact"
+        in monthly.tasks[7].kwargs["script_args"]["--DBT_RESULT_URI"]
+    )
+    assert "--max-scanned-bytes" in monthly.tasks[8].kwargs["bash_command"]
+    assert "AWS_REGION" in monthly.tasks[8].kwargs["env"]
 
     backfill = module.nyc_hvfhs_four_month_backfill_dag
     assert [task.task_id for task in backfill.tasks] == [

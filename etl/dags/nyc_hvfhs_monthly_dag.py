@@ -8,13 +8,18 @@ logic; Glue, dbt, and the quality checkpoint own that work.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 from airflow.sdk import DAG, Param, Variable
+from cosmos import DbtTaskGroup
+from cosmos.config import ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, InvocationMode, TestBehavior
 
+from etl.orchestration.nyc_hvfhs_cosmos import require_dbt_result_artifact
 from etl.orchestration.nyc_hvfhs_runs import (
     MonthlyRunRequest,
     audit_for_source,
@@ -25,6 +30,8 @@ from etl.sources.nyc_hvfhs import SourceFile, monthly_trip_filename
 
 MONTHLY_DAG_ID = "nyc_hvfhs_monthly"
 BACKFILL_DAG_ID = "nyc_hvfhs_four_month_backfill"
+DBT_PROJECT_PATH = Path(__file__).resolve().parents[1] / "dbt_project"
+DBT_PROFILES_PATH = DBT_PROJECT_PATH / "profiles.yml"
 
 DEFAULT_ARGS = {
     "owner": "data-engineering",
@@ -141,22 +148,43 @@ with DAG(
         verbose=True,
     )
 
-    dbt_build = BashOperator(
-        task_id="dbt_build",
-        bash_command=(
-            "set -euo pipefail; "
-            "cd {{ var.value.nyc_project_root }}/etl/dbt_project && "
-            "dbt build --profiles-dir . --target glue "
-            '--vars \'{"source_year": {{ ti.xcom_pull(task_ids="prepare_month")["source_year"] }}, '
-            '"source_month": {{ ti.xcom_pull(task_ids="prepare_month")["source_month"] }}}\' && '
-            'DBT_RESULT_URI="{{ var.value.nyc_publication_prefix_uri }}/dbt-results/'
-            "year={{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}/"
-            "month={{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}/"
-            "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}.json\"; "
-            'aws s3 cp target/run_results.json "$DBT_RESULT_URI" >/dev/null; '
-            'printf "%s" "$DBT_RESULT_URI"'
+    dbt_build = DbtTaskGroup(
+        group_id="dbt_build",
+        project_config=ProjectConfig(
+            dbt_project_path=DBT_PROJECT_PATH,
+            install_dbt_deps=False,
+            copy_dbt_packages=True,
         ),
-        do_xcom_push=True,
+        profile_config=ProfileConfig(
+            profile_name="nyc_hvfhs_lakehouse",
+            target_name="glue",
+            profiles_yml_filepath=DBT_PROFILES_PATH,
+        ),
+        render_config=RenderConfig(test_behavior=TestBehavior.BUILD),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.WATCHER,
+            invocation_mode=InvocationMode.SUBPROCESS,
+            setup_operator_args={
+                "callback": "etl.orchestration.nyc_hvfhs_cosmos.archive_dbt_run_results"
+            },
+        ),
+        operator_args={
+            "vars": {
+                "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            }
+        },
+    )
+
+    dbt_result_artifact = PythonOperator(
+        task_id="dbt_result_artifact",
+        python_callable=require_dbt_result_artifact,
+        op_kwargs={
+            "publication_prefix_uri": "{{ var.value.nyc_publication_prefix_uri }}",
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+        },
     )
 
     reconciliation = GlueJobOperator(
@@ -179,7 +207,7 @@ with DAG(
             "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
             "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
             "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "--DBT_RESULT_URI": "{{ ti.xcom_pull(task_ids='dbt_build') }}",
+            "--DBT_RESULT_URI": "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
         },
         aws_conn_id=None,
         wait_for_completion=True,
@@ -213,6 +241,7 @@ with DAG(
         >> great_expectations_checkpoint
         >> silver_transform
         >> dbt_build
+        >> dbt_result_artifact
         >> reconciliation
         >> publication_manifest
         >> athena_smoke

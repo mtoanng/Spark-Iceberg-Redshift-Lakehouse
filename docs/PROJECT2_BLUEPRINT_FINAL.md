@@ -14,7 +14,7 @@ official monthly HVFHV Parquet + Taxi Zone CSV
 -> Glue 4.0/PySpark Bronze Iceberg
 -> structural Great Expectations gate
 -> Glue 4.0/PySpark Silver Iceberg + quarantine
--> dbt-glue Gold Iceberg
+-> Cosmos `DbtTaskGroup` -> dbt-glue Gold Iceberg
 -> reconciliation
 -> snapshot-aware publication JSON
 -> Athena bounded read-only serving
@@ -82,13 +82,18 @@ prepare_month
 -> bronze_ingestion
 -> great_expectations_checkpoint
 -> silver_transform
--> dbt_build
+-> Cosmos `dbt_build` task group
+-> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
 -> athena_smoke
 ```
 
-The DAG is manual with `year`, `month`, and `force`. Airflow retry, manual task
+The DAG is manual with `year`, `month`, and `force`. Cosmos Watcher mode runs
+one full `dbt build` producer and renders model-level watchers. Its producer
+callback uploads the complete `run_results.json` to the deterministic
+publication prefix; `dbt_result_artifact` verifies that object before
+reconciliation. Airflow retry, manual task
 clear, and deterministic monthly rerun reuse immutable source identity and
 replace month-scoped outputs. `force` never accepts changed content. Four
 consecutive months remain a fixed companion DAG, not a generic framework.
@@ -125,8 +130,9 @@ automation is in scope.
 ## Deployment boundary
 
 Keep Glue 4.0, Terraform S3/Glue/Catalog/IAM/Athena resources, and the optional
-temporary EC2 Airflow runner with instance profile. Do not add MWAA, Cosmos,
-EKS, Lake Formation, KMS management, dashboards, alarms, or extra buckets.
+temporary EC2 Airflow runner with instance profile. Cosmos is limited to the
+in-process dbt-glue `DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS
+management, dashboards, alarms, or extra buckets.
 
 `CODEBASE-READY` requires all credential-independent contracts to pass.
 `DEPLOYMENT-VERIFIED` remains `NOT VERIFIED` until a real bounded AWS run
