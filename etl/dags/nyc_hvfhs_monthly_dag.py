@@ -206,7 +206,7 @@ with DAG(
         ),
         profile_config=ProfileConfig(
             profile_name="nyc_hvfhs_lakehouse",
-            target_name="glue",
+            target_name="redshift",
             profiles_yml_filepath=DBT_PROFILES_PATH,
         ),
         render_config=RenderConfig(test_behavior=TestBehavior.BUILD),

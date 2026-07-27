@@ -1,13 +1,10 @@
-{{ config(materialized='table', file_format='iceberg') }}
+{{ config(materialized='table') }}
 
 -- Grain: one row per source year, source month, and operator.
 select
-    concat_ws(
-        '-',
-        cast(source_year as string),
-        lpad(cast(source_month as string), 2, '0'),
-        operator_code
-    ) as operator_month_key,
+    cast(source_year as varchar) || '-'
+        || lpad(cast(source_month as varchar), 2, '0') || '-'
+        || operator_code as operator_month_key,
     source_year,
     source_month,
     operator_code,

@@ -8,8 +8,9 @@ flowchart LR
   B --> GE[Structural GE gate]
   GE --> S[EMR Serverless Silver]
   S --> Q[Quarantine]
-  S --> C[Cosmos DbtTaskGroup]
-  C --> G[Six dbt-glue Gold models]
+  S --> X[Redshift external schemas]
+  X --> C[Cosmos DbtTaskGroup]
+  C --> G[Six dbt-redshift managed Gold models]
   G --> R[Reconciliation]
   R --> P[Snapshot-aware JSON publication]
   P --> A[Bounded Athena]
@@ -20,12 +21,23 @@ with instance-profile authentication. One persistent EMR Serverless application
 runs Bronze, GE, Silver, reconciliation, and publication; Glue Data Catalog
 remains Iceberg metadata only. Cosmos owns dbt orchestration only: its
 Watcher-mode producer runs the full build and archives `run_results.json`; its
-model watchers expose progress. dbt-glue owns only the six Gold relations.
+model watchers expose progress. Redshift Spectrum exposes the Glue-catalogued
+Bronze and Silver Iceberg tables through external schemas, while dbt-redshift
+owns only the six Redshift-managed Gold relations.
 
 Bronze is source-faithful. GE is structural. Silver is the only row-level
 classification owner. Gold is one canonical fact graph. Publication is an
 atomic evidence boundary: resolve counts/locations/snapshots, write JSON, then
 mark the run published. Athena never becomes canonical.
+
+## Migration boundary
+
+This phase changes only the Gold transformation backend and its Cosmos runtime.
+The DAG dependency chain and downstream tasks are intentionally unchanged.
+The existing reconciliation, publication, and Athena implementations still
+expect Glue-catalogued Gold Iceberg tables, so their execution against
+Redshift-managed Gold is **NOT VERIFIED** and requires a separately scoped
+adapter migration before the complete deployed pipeline can succeed.
 
 Exact identity and probable business identity are deliberately separate.
 `row_id` changes for any canonical source-field change; `business_trip_key`

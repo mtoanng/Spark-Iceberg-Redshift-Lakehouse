@@ -8,12 +8,15 @@ immutable S3 landing
 -> EMR Serverless PySpark Bronze Iceberg
 -> structural Great Expectations gate
 -> EMR Serverless PySpark Silver + quarantine Iceberg
--> Cosmos `DbtTaskGroup` + dbt-glue Gold
+-> Redshift Serverless external Bronze/Silver schemas
+-> Cosmos `DbtTaskGroup` + dbt-redshift managed Gold
 -> reconciliation + snapshot-aware publication
 -> bounded read-only Athena
 ```
 
-Iceberg on S3 is canonical and Glue Data Catalog is the canonical catalog.
+Iceberg on S3 remains canonical for Bronze, Silver, quarantine, and operational
+state. Glue Data Catalog remains their Iceberg catalog. Redshift Serverless
+owns the six managed Gold relations.
 The first release is one immutable 2024 month; four consecutive months follow
 only after that baseline succeeds.
 
@@ -40,12 +43,15 @@ Silver = Gold fct_trips
 venv\Scripts\python.exe -m pytest -q
 venv\Scripts\python.exe -m compileall -q etl athena scripts tests
 venv\Scripts\dbt.exe deps --project-dir etl/dbt_project --profiles-dir etl/dbt_project
+venv\Scripts\dbt.exe parse --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci
+venv\Scripts\dbt.exe compile --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci --no-introspect --no-populate-cache
+venv\Scripts\python.exe scripts/verify_dbt_manifest.py
 terraform -chdir=terraform fmt -check
 terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform validate
 ```
 
-Package Glue imports deterministically:
+Package EMR Serverless Spark imports deterministically:
 
 ```powershell
 venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
@@ -54,5 +60,7 @@ venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_j
 Deployment and execution commands are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 Operational semantics are in [docs/SEMANTICS.md](docs/SEMANTICS.md).
 
-No real AWS execution is claimed. `DEPLOYMENT-VERIFIED` is **NOT VERIFIED**
-until one bounded run and teardown retain evidence.
+No real AWS execution is claimed. Redshift connectivity, external Iceberg
+reads, managed Gold builds, and the existing downstream Spark
+reconciliation/publication/Athena adapters are **NOT VERIFIED** until a bounded
+AWS run and any required downstream migration retain evidence.

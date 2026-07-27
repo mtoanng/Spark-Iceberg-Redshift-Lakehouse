@@ -27,4 +27,3 @@ clean-targets:
 models:
   nyc_hvfhs_lakehouse:
     +materialized: table
-    +file_format: iceberg

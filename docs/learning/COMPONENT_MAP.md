@@ -17,33 +17,33 @@ Immutable landing
         |
         v
 Orchestration
-  Airflow monthly DAG -> XCom audit + Glue/dbt/Athena task calls
+  Airflow monthly DAG -> XCom audit + EMR Serverless/dbt/Athena task calls
         |
         +---------------------------------------------------------------+
         |                                                               |
         v                                                               |
 Bronze component                                                        |
-  Glue Bronze -> Bronze trips/zones + ops manifest + snapshot           |
+  EMR Bronze -> Bronze trips/zones + ops manifest + snapshot            |
         |                                                               |
         v                                                               |
 Structural gate                                                         |
-  Glue + Great Expectations -> ge_passed/ge_blocked                     |
+  EMR + Great Expectations -> ge_passed/ge_blocked                      |
         |                                                               |
         v                                                               |
 Canonicalization component                                              |
-  Glue Silver -> Silver + quarantine + snapshots                        |
+  EMR Silver -> Silver + quarantine + snapshots                         |
         |                                                               |
         v                                                               |
 Analytical modeling                                                     |
-  dbt-glue -> six Gold Iceberg models + run_results.json                 |
+  Redshift external schemas -> dbt-redshift managed Gold + run_results  |
         |                                                               |
         v                                                               |
 Reconciliation                                                          |
-  Glue reconciliation -> reconciled/pending                             |
+  EMR reconciliation -> reconciled/pending                              |
         |                                                               |
         v                                                               |
 Publication                                                             |
-  Glue publication -> durable JSON -> published                         |
+  EMR publication -> durable JSON -> published                          |
         |                                                               |
         v                                                               |
 Serving                                                                 |
@@ -65,10 +65,10 @@ expected schema and cost bound.
 | Bronze | Bronze EMR Serverless job | landed month, zones, immutable facts | Bronze partitions, run state, snapshot | S3 source, manifest | Bronze + Ops | identity mismatch/read/write failure |
 | Structural gate | GX EMR Serverless job | requested Bronze run | `ge_passed` or `ge_blocked` summary | Bronze + Ops | Ops | missing/empty structural batch |
 | Silver/quarantine | Silver EMR Serverless job | gated Bronze and zones | two classified partitions and snapshots | Bronze/Silver/Ops | Silver/quarantine/Ops | invalid policy or failed classification/write |
-| Gold | dbt-glue | canonical Silver and Bronze zones | three dimensions, fact, two marts, dbt result | Bronze/Silver/Gold | Gold + dbt results S3 | model or data-test failure |
-| Reconciliation | reconciliation EMR Serverless job | manifest and actual layer tables | reconciled state and Gold count | Ops/Silver/quarantine/Gold | Ops | any monthly count difference |
-| Publication | publication EMR Serverless job + pure builder | reconciled row, table metadata, dbt results | durable canonical JSON and published state | Ops/Gold/Iceberg metadata/S3 | manifests S3 + Ops | missing table/location/snapshot/dbt success |
-| Athena serving | runner, verifier, four SQL artifacts | published Gold and parameters | query audit/result | Glue Gold + Gold S3 | Athena result prefix | schema, count, uniqueness, bound, or query failure |
+| Gold | dbt-redshift through Cosmos | external Silver and Bronze schemas | three dimensions, fact, two marts, dbt result | Glue/S3 through Spectrum; managed Gold | Redshift Gold + dbt results S3 | connection, model, or data-test failure |
+| Reconciliation | reconciliation EMR Serverless job | manifest and actual layer tables | reconciled state and Gold count | legacy Ops/Silver/quarantine/Gold Iceberg contract | Ops | Redshift adapter is outside this phase |
+| Publication | publication EMR Serverless job + pure builder | reconciled row, table metadata, dbt results | durable canonical JSON and published state | legacy Ops/Gold Iceberg metadata/S3 contract | manifests S3 + Ops | Redshift evidence adapter is outside this phase |
+| Athena serving | runner, verifier, four SQL artifacts | published Gold and parameters | query audit/result | legacy Glue Gold + Gold S3 contract | Athena result prefix | Redshift serving migration is outside this phase |
 | Infrastructure | Terraform | approved variables and package | AWS resources and outputs | configuration/package | AWS control plane | plan/apply/IAM/resource error |
 | Evidence verification | rerun/evolution/teardown scripts | retained JSON or live read-only APIs | PASS/FAIL result | evidence/AWS APIs | none | incomplete or divergent evidence |
 
@@ -170,7 +170,7 @@ Silver, quarantine, and Ops Iceberg schemas. It produces:
 
 ### Runtime adapter
 
-`initialize_nyc_iceberg_tables.py` starts Glue/Spark, applies namespace
+`initialize_nyc_iceberg_tables.py` starts a normal Spark session, applies namespace
 overrides, creates all declared upstream tables, and optionally executes the
 2025 evolution. It does not create Gold; dbt owns Gold model creation.
 
@@ -213,7 +213,7 @@ remote task.
 
 Airflow uses three kinds of configuration:
 
-1. Variables for source facts, Glue job names, project paths, Gold/Athena
+1. Variables for source facts, EMR application/script paths, Gold/Athena
    settings, and publication prefix.
 2. Environment variables for dbt and the Athena Bash task.
 3. XCom for the run-specific audit and durable dbt results URI.
@@ -225,7 +225,7 @@ The exact mapping is in
 
 ### Preconditions
 
-- complete required Glue arguments;
+- complete required Spark entrypoint arguments;
 - valid landed `s3://` URI for the requested official filename;
 - 64-character source and Taxi Zone checksums;
 - positive source size;
@@ -269,7 +269,7 @@ frame is non-empty. It stores a compact JSON summary in Ops.
 | Outcome | State | Validation status | Downstream |
 | --- | --- | --- | --- |
 | structural success | `ge_passed` | `passed` | Silver allowed |
-| missing/empty failure | `ge_blocked` | `blocked` | Glue raises; Silver blocked |
+| missing/empty failure | `ge_blocked` | `blocked` | Spark raises; Silver blocked |
 
 This component does not clean, transform, deduplicate, or quarantine rows.
 
@@ -310,12 +310,12 @@ same classification result.
 - counts and current snapshots;
 - `silver_published` state.
 
-## 10. dbt-glue Gold component
+## 10. dbt-redshift Gold component
 
 ### Sources
 
-- `silver.silver_trips`;
-- `bronze.bronze_taxi_zones`.
+- `silver_external.silver_trips`;
+- `bronze_external.bronze_taxi_zones`.
 
 ### Model dependency graph
 
@@ -334,15 +334,25 @@ complete Silver and fact counts.
 
 ### Runtime behavior
 
-dbt runs on the temporary Airflow runner and requests a dbt-glue session using
-the configured role and the dbt-glue session. The fact merge processes only the requested
-month. `iceberg_expire_snapshots='False'` prevents dbt from treating snapshot
-expiration as part of this project.
+dbt runs on the temporary Airflow runner and connects to the private Redshift
+Serverless workgroup with IAM authentication from the default AWS credential
+chain. Redshift Spectrum resolves the external schemas through Glue Data
+Catalog. The fact merge processes only the requested month and remains keyed
+by `row_id`; the other five relations are Redshift-managed tables. No Gold
+model carries Spark, Iceberg, partition, distribution, or sort-key config.
 
 ### Durable handoff
 
-Airflow copies `target/run_results.json` to S3. Publication consumes the S3
-object, not an ephemeral local file or a claimed task status.
+Airflow copies `target/run_results.json` to S3. The explicit artifact task
+requires that object before reconciliation, so a failed model or test blocks
+both reconciliation and publication.
+
+### Preserved downstream boundary
+
+The DAG still orders reconciliation, publication, and Athena after dbt. Their
+current implementations read Glue-catalogued Gold Iceberg metadata, however,
+and were deliberately not rewritten in this phase. Live execution of those
+three components against Redshift-managed Gold is **NOT VERIFIED**.
 
 ## 11. Reconciliation component
 
@@ -377,7 +387,7 @@ This job is read-only for data tables. Its only write is operational state.
 
 ### Remote adapter
 
-The Glue job:
+The publication Spark job:
 
 - requires a reconciled manifest;
 - reads latest Iceberg snapshots;
@@ -432,7 +442,8 @@ uniqueness, timestamp bounds, optional publication count, and scan byte bound.
 
 - Glue can read landing/reference/job artifacts and manage canonical
   warehouse/manifest objects plus catalog tables.
-- Airflow can start named Glue jobs, run the dbt Glue session, copy dbt result
+- Airflow can submit jobs to the named EMR Serverless application, obtain
+  Redshift IAM credentials, copy dbt result
   artifacts, and use the one Athena workgroup.
 - Athena access reads only Gold catalog/table objects and writes only the
   Athena results prefix.

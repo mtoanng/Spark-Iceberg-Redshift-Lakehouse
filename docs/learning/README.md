@@ -12,7 +12,7 @@ implementation without treating individual files as isolated scripts.
    configuration, permissions, tests, and failure behavior.
 3. **Code-module layer** —
    [CODE_MODULE_REFERENCE.md](CODE_MODULE_REFERENCE.md) traces the active
-   Python modules, Glue entrypoints, Airflow DAG, dbt models, Athena code,
+   Python modules, Spark entrypoints, Airflow DAG, dbt models, Athena code,
    deployment scripts, Terraform files, and tests.
 
 Use [DEPLOYMENT_WALKTHROUGH.md](DEPLOYMENT_WALKTHROUGH.md) after the three
@@ -28,10 +28,10 @@ document and that blueprint disagree, the blueprint wins.
 
 The project takes one checksum-pinned official NYC TLC HVFHV monthly Parquet
 file and Taxi Zone lookup, lands them immutably in S3, orchestrates
-Bronze-to-Gold Iceberg processing with Airflow 3 and EMR Serverless, classifies every
-Bronze row into either canonical Silver or reason-coded quarantine, publishes
-snapshot-aware evidence only after dbt and reconciliation succeed, and exposes
-only bounded read-only Athena queries.
+Bronze-to-Silver Iceberg processing with Airflow 3 and EMR Serverless,
+classifies every Bronze row into either canonical Silver or reason-coded
+quarantine, exposes those Iceberg tables to Redshift Serverless, and uses
+Cosmos plus dbt-redshift to build managed Gold relations.
 
 ```text
 official immutable HVFHV month + Taxi Zones
@@ -42,25 +42,31 @@ S3 landing/reference
         v
 Airflow 3 monthly DAG on temporary EC2 runner
         |
-        +--> Glue Bronze --> Iceberg bronze + operational manifest
+        +--> EMR Serverless Bronze --> Iceberg bronze + operational manifest
         |
         +--> structural Great Expectations gate
         |
-        +--> Glue Silver --> Iceberg silver + quarantine
+        +--> EMR Serverless Silver --> Iceberg silver + quarantine
         |
-        +--> dbt-glue --> 3 dimensions + 1 fact + 2 marts
+        +--> Redshift external schemas --> dbt-redshift
+        |                                  3 dimensions + 1 fact + 2 marts
         |
-        +--> Glue reconciliation
+        +--> EMR Serverless reconciliation
         |
-        +--> Glue publication --> durable JSON evidence
+        +--> EMR Serverless publication --> durable JSON evidence
         |
         +--> bounded, read-only Athena smoke
 ```
 
-Glue Data Catalog is the canonical metadata catalog. Iceberg tables and their
-metadata on S3 are canonical data. Airflow coordinates work but is not a data
-store. Athena consumes published Gold state but is neither canonical storage
-nor a transformation engine.
+Glue Data Catalog is the metadata catalog for upstream Iceberg tables.
+Redshift external schemas expose the Bronze and Silver Glue databases, and
+Redshift-managed tables own Gold. Airflow coordinates work but is not a data
+store.
+
+The Gold-backend phase intentionally preserves the old downstream task order.
+The Spark reconciliation/publication adapters and Athena Gold queries still
+expect Glue-catalogued Gold Iceberg tables. They cannot be claimed compatible
+with Redshift-managed Gold until a later adapter phase and retained AWS run.
 
 ## 2. Why the architecture is deliberately bounded
 
@@ -95,8 +101,8 @@ The data plane carries trip rows and Taxi Zone reference rows:
 S3 source objects
   -> Bronze Iceberg rows
   -> Silver or quarantine Iceberg rows
-  -> Gold Iceberg fact/dimensions/marts
-  -> Athena result objects
+  -> Redshift external tables
+  -> Redshift-managed Gold fact/dimensions/marts
 ```
 
 Bronze is source-faithful plus ingestion and identity metadata. Silver owns
@@ -128,7 +134,8 @@ distributed work; the DAG passes arguments and waits for completion.
 This plane answers “what does the table mean?” and “what state is this monthly
 run in?”
 
-- Glue Data Catalog stores namespaces and table definitions.
+- Glue Data Catalog stores upstream Iceberg namespaces and table definitions.
+- Redshift Serverless stores the local `gold` schema and its six relations.
 - Iceberg metadata stores snapshots, schema, partitions, and table history.
 - `ops.source_run_manifest` stores immutable source identity, stable run ID,
   identity policy, stage status, counts, snapshots, validation state, failures,
@@ -143,8 +150,9 @@ The evidence plane makes a successful run auditable after Airflow logs expire:
 - uploaded source objects retain `sha256` S3 object metadata;
 - the operational manifest retains counts, snapshots, and lifecycle state;
 - dbt `run_results.json` is copied to durable S3 storage;
-- publication writes canonically serialized JSON containing source identity, layer
-  counts/snapshots, every Gold table location/count/snapshot, and dbt summary;
+- the Cosmos callback retains dbt `run_results.json` before downstream work;
+- the legacy publication contract expects Gold Iceberg locations and snapshots;
+  adapting that evidence shape for Redshift-managed Gold is outside this phase;
 - Athena reports query ID, database, workgroup, result location, state,
   scanned bytes, and engine time.
 
@@ -165,11 +173,10 @@ s3://<bucket>/
     bronze/
     silver/
     ops/
-    gold/
   spark_jobs/            EMR Serverless PySpark entry scripts and shared Python zip
   manifests/             dbt results and publication JSON
   athena-results/        Athena output only
-  tmp/                   Glue temporary files
+  tmp/                   transient runtime files
 ```
 
 The bucket has `force_destroy = false`. A bounded teardown intentionally
@@ -357,7 +364,7 @@ An invalid row remains visible in quarantine with its original identity.
 
 ### 6.3 Reconciliation: “did the published layers agree?”
 
-After dbt succeeds, the Glue reconciliation job checks the actual month:
+After dbt succeeds, the EMR Serverless reconciliation job checks the actual month:
 
 ```text
 manifest Bronze count = actual Silver count + actual quarantine count
@@ -388,7 +395,7 @@ every later task.
 
 ### Step 2: `bronze_ingestion`
 
-The Glue job:
+The Bronze Spark job:
 
 1. validates the S3 URI, year/month, checksum shape, size, and run ID;
 2. verifies source and Taxi Zone S3 metadata through `HeadObject`;
@@ -406,7 +413,7 @@ On failure it records `failure_stage` and a bounded message before re-raising.
 
 ### Step 3: `great_expectations_checkpoint`
 
-The Glue job refuses to start unless the same manifest row is
+The GX Spark job refuses to start unless the same manifest row is
 `bronze_published`. It filters Bronze to year, month, and run ID, runs an
 ephemeral GX Spark dataframe asset, performs the non-empty check, persists a
 JSON summary, and raises if the result is blocked. Airflow therefore cannot
@@ -414,7 +421,7 @@ schedule Silver after a failed gate.
 
 ### Step 4: `silver_transform`
 
-The Glue job requires `ge_passed`, or a retryable Silver-stage failure whose
+The Silver Spark job requires `ge_passed`, or a retryable Silver-stage failure whose
 validation status remains passed. It:
 
 1. reads only the requested Bronze run;
@@ -449,14 +456,14 @@ SHA-256-tagged, then returns its durable URI through XCom.
 
 ### Step 6: `reconciliation`
 
-The Glue job recounts actual Silver, quarantine, and monthly fact rows. It
+The reconciliation Spark job recounts actual Silver, quarantine, and monthly fact rows. It
 compares them with manifest counts and fails on any difference. Success sets
 `run_status='reconciled'`, stores `gold_row_count`, and makes publication
 pending.
 
 ### Step 7: `publication_manifest`
 
-The Glue job requires `reconciled`. It then:
+The publication Spark job requires `reconciled`. It then:
 
 1. verifies all six Gold tables exist;
 2. obtains every Gold table location, row count, and latest snapshot;
@@ -527,8 +534,9 @@ because Terraform hashes and uploads that file. An approved apply creates:
 - protected project S3 bucket;
 - `bronze`, `silver`, `ops`, and `gold` Glue databases;
 - Glue shared package and six job scripts in S3;
-- initializer, Bronze, GX, Silver, reconciliation, and publication Glue jobs;
-- Glue service role and scoped access policy;
+- initializer, Bronze, GX, Silver, reconciliation, and publication Spark
+  entrypoints on one EMR Serverless application;
+- EMR Serverless execution and Redshift Spectrum roles with scoped policies;
 - bounded Athena workgroup;
 - Airflow runner IAM role;
 - optional EC2 runner and instance profile when AMI/subnet are supplied.
@@ -540,7 +548,7 @@ must be installed and started as described in the deployment runbook.
 
 Read [DEPLOYMENT_WALKTHROUGH.md](DEPLOYMENT_WALKTHROUGH.md) for the exact
 configuration handoff among Terraform outputs, upload-script output, Airflow
-Variables, environment variables, Glue arguments, and S3 evidence.
+Variables, environment variables, Spark entrypoint arguments, and S3 evidence.
 
 ## 11. Failure boundaries
 
@@ -567,7 +575,7 @@ Credential-independent tests prove:
 - Bronze metadata contract;
 - reason priority, deduplication, quarantine, and reconciliation on fixtures;
 - operational state transitions and retry decisions;
-- Glue job static contracts and DAG topology;
+- EMR Serverless job static contracts and DAG topology;
 - exact six-model dbt contract and parse/compile;
 - publication completeness and deterministic serialization for a given document;
 - bounded Athena SQL and runner behavior;
@@ -586,12 +594,11 @@ Until a retained controlled AWS run exists, the following remain
 - source upload into the target account;
 - EMR Serverless execution and CloudWatch behavior;
 - actual Iceberg writes, partitions, and snapshot IDs;
-- Great Expectations inside Glue;
-- dbt-glue interactive session and model execution;
+- Great Expectations inside EMR Serverless Spark;
+- Redshift Serverless/Spectrum connectivity and dbt-redshift model execution;
 - Airflow runner installation, scheduling, retry, clear, and rerun;
-- reconciliation against real monthly counts;
-- publication artifact in S3;
-- Athena query ID/results/scan cutoff;
+- Redshift-aware reconciliation/publication/Athena adapters (not implemented in
+  this Gold-backend phase);
 - four-month sequence;
 - 2025 schema evolution and 2024 version travel;
 - cost, performance, and bounded teardown.
@@ -608,7 +615,7 @@ Use `CODEBASE-READY` for a clean credential-independent verification. Use
    [CODE_MODULE_REFERENCE.md](CODE_MODULE_REFERENCE.md), then inspect those
    source files.
 4. Trace one fixture row through pure Bronze and Silver functions.
-5. Trace the corresponding remote path through the three Glue jobs.
+5. Trace the corresponding remote path through the EMR Serverless entrypoints.
 6. Read the dbt fact and marts and state their exact grains.
 7. Follow [DEPLOYMENT_WALKTHROUGH.md](DEPLOYMENT_WALKTHROUGH.md) and explain
    every configuration handoff.

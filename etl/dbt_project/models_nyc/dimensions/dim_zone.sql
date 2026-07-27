@@ -1,4 +1,4 @@
-{{ config(materialized='table', file_format='iceberg') }}
+{{ config(materialized='table') }}
 
 select
     cast(LocationID as int) as zone_id,

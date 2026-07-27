@@ -71,12 +71,12 @@ Conceptual dependency graph:
 ```text
 AWS provider/account
   -> S3 bucket/protection
-      -> Glue package and scripts
-      -> Glue jobs
+      -> Spark package and scripts
       -> Athena result configuration
   -> Glue databases
-  -> Glue service role/policy
-      -> Glue jobs
+  -> EMR Serverless application + execution role
+  -> Redshift Serverless namespace/workgroup + Spectrum role
+      -> external Bronze/Silver schemas + local Gold schema
   -> Airflow role/policies
       -> optional instance profile
           -> optional EC2 runner
@@ -89,10 +89,14 @@ Terraform outputs become downstream configuration:
 | --- | --- |
 | `s3_bucket_name` | upload and evidence commands |
 | `s3_landing_uri` | Airflow `nyc_landing_uri` |
-| `s3_warehouse_uri` | Glue Spark catalog and dbt `S3_GOLD_PATH` |
-| `glue_database_name` | dbt/Athena database config |
-| `glue_role_arn` | dbt `GLUE_ROLE_ARN` |
-| `glue_job_names` | Airflow Glue-job Variables |
+| `s3_warehouse_uri` | EMR Serverless Spark Iceberg catalog |
+| `glue_database_name` | upstream Iceberg catalog inspection |
+| `emr_serverless_application_id` | Airflow Spark tasks |
+| `emr_serverless_execution_role_arn` | Airflow Spark tasks |
+| `spark_script_prefix_uri` / `spark_package_uri` | EMR job drivers |
+| `redshift_serverless_host` | dbt `REDSHIFT_HOST` |
+| `redshift_serverless_workgroup_name` | dbt `REDSHIFT_WORKGROUP_NAME` |
+| `redshift_database_name` | dbt `REDSHIFT_DATABASE` |
 | `athena_workgroup_name` | Airflow/Athena verifier |
 | `athena_results_prefix` | evidence and teardown verification |
 | `publication_prefix_uri` | Airflow publication Variable |
@@ -114,18 +118,19 @@ prefixes. There is no second data store.
 
 ### Catalog
 
-Exactly four Glue databases:
+The upstream Iceberg contract uses these Glue databases:
 
 ```text
 bronze
 silver
 ops
-gold
 ```
 
-The initializer creates upstream Iceberg tables. dbt creates Gold model tables.
+Terraform may retain the legacy `gold` catalog database for downstream
+compatibility, but dbt no longer writes it. The initializer creates upstream
+Iceberg tables; dbt creates managed relations in the Redshift `gold` schema.
 
-### Glue jobs
+### EMR Serverless Spark
 
 One pre-created EMR Serverless Spark application auto-starts on submission and
 auto-stops after its bounded idle period. Every entrypoint is an S3 script and
@@ -156,12 +161,12 @@ The instance is temporary. The bucket and canonical databases are not.
 
 ## 6. IAM collaboration
 
-### Glue service role
+### EMR Serverless execution role
 
-Glue can:
+EMR Serverless can:
 
 - list the project bucket;
-- read landing, reference, and Glue job objects;
+- read landing, reference, and Spark script/package objects;
 - read/write/delete Iceberg warehouse objects required for table commits;
 - use Glue temporary and manifest prefixes;
 - create/read/update required Glue Catalog tables.
@@ -169,13 +174,14 @@ Glue can:
 Deleting individual Iceberg objects is a normal table-commit capability, not
 authorization for a broad manual S3 cleanup.
 
-### Airflow runner role
+### Redshift Spectrum and Airflow runner roles
 
-The runner can:
+The Spectrum role can read the Bronze/Silver warehouse prefixes and their Glue
+Catalog metadata. The runner can:
 
-- start and inspect project-prefixed Glue jobs;
-- create/use the dbt Glue interactive session;
-- read configuration/catalog facts required by dbt;
+- start and inspect the one EMR Serverless application;
+- request temporary Redshift Serverless credentials and connect to the
+  configured workgroup;
 - write retained dbt results;
 - run only the configured Athena workgroup;
 - use SSM for runner access.
@@ -225,7 +231,7 @@ The output is the authoritative configuration handoff to Airflow.
 
 ## 8. Initializer run
 
-The initializer receives the warehouse URI from Glue default arguments and
+The initializer receives the warehouse URI as a standard Spark argument and
 creates upstream Iceberg tables.
 
 Baseline invocation does not set the evolution flag. The expected tables are:
@@ -238,7 +244,7 @@ silver.quarantine_trips
 ops.source_run_manifest
 ```
 
-Verification must inspect the Glue job run, catalog schemas, partitions,
+Verification must inspect the EMR Serverless job run, catalog schemas, partitions,
 locations beneath the warehouse prefix, and Iceberg format. A submitted job ID
 alone is insufficient evidence.
 
@@ -259,28 +265,30 @@ nyc_hvfhs_2024_01_size_bytes
 
 Each additional month needs its own hash and size Variables.
 
-### Glue job Variables
+### EMR Serverless Variables
 
 ```text
-nyc_bronze_job_name
-nyc_great_expectations_job_name
-nyc_silver_job_name
-nyc_reconciliation_job_name
-nyc_publication_job_name
+nyc_emr_serverless_application_id
+nyc_emr_serverless_execution_role_arn
+nyc_spark_script_prefix_uri
+nyc_spark_package_uri
+nyc_emr_serverless_log_uri
 ```
 
 ### Runtime path/publication Variables
 
 ```text
-nyc_project_root
+nyc_warehouse_uri
 nyc_publication_prefix_uri
 ```
 
 ### dbt environment
 
 ```text
-GLUE_ROLE_ARN
-S3_GOLD_PATH
+AWS_ACCOUNT_ID
+REDSHIFT_HOST
+REDSHIFT_WORKGROUP_NAME
+REDSHIFT_DATABASE
 AWS_REGION
 ```
 
@@ -294,8 +302,8 @@ athena_smoke_enabled
 aws_region
 ```
 
-Airflow uses `aws_conn_id=None` for Glue operators so the default instance
-profile chain is used.
+Airflow uses `aws_conn_id=None` for EMR Serverless operators and dbt uses
+Redshift IAM authentication, so both use the default instance-profile chain.
 
 ## 10. Monthly DAG runtime trace
 
@@ -320,9 +328,8 @@ No AWS data mutation occurs in this task.
 
 ### `bronze_ingestion`
 
-Airflow maps XCom values to Glue script arguments. Terraform default arguments
-provide catalog/database/warehouse/publication settings. The Glue job combines
-both sets.
+Airflow maps XCom values to standard Spark entrypoint arguments. The DAG also
+provides catalog/database/warehouse/publication settings.
 
 The runtime state transition is:
 
@@ -355,10 +362,12 @@ This is where row-level business behavior belongs.
 
 ### Cosmos `dbt_build` and `dbt_result_artifact`
 
-Cosmos runs a single Watcher-mode dbt producer on EC2, while dbt-glue performs
-the transformation. Model watchers make the build visible in Airflow. Explicit
-vars bind the fact merge to the current month, and a successful build must also
-pass dbt tests.
+Cosmos runs a single Watcher-mode dbt producer on EC2, while dbt-redshift
+performs the transformation in Redshift Serverless. Model watchers make the
+build visible in Airflow. The runner supplies the endpoint, workgroup,
+database, account, and region as environment variables and obtains temporary
+credentials from its AWS identity. Explicit vars bind the fact merge to the
+current month, and a successful build must also pass dbt tests.
 
 The producer callback then copies the complete artifact, and the downstream
 `dbt_result_artifact` task verifies that it exists and has SHA-256 metadata:
@@ -428,7 +437,7 @@ across:
 
 - upload output/S3 metadata;
 - Airflow `prepare_month` XCom;
-- Glue arguments;
+- Spark entrypoint arguments;
 - Ops manifest;
 - publication JSON.
 
@@ -496,7 +505,7 @@ Run the initializer with explicit `APPLY_2025_EVOLUTION=true`. It adds nullable
 - Silver trips;
 - quarantine.
 
-There is no new schema-evolution Glue job and no maintenance suite.
+There is no separate schema-evolution application or maintenance suite.
 
 ### New snapshot
 
@@ -532,8 +541,8 @@ interpolate the snapshot ID.
 - optional runner;
 - runner profile/roles/policies;
 - Athena workgroup;
-- six Glue jobs;
-- Glue service role/policy.
+- one EMR Serverless application and six Spark entrypoints;
+- EMR Serverless execution role/policy and Redshift Spectrum role/policy.
 
 It intentionally excludes:
 

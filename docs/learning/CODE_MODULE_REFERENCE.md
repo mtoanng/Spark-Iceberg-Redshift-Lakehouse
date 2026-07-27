@@ -73,7 +73,7 @@ Important functions:
 | `row_id(record, year)` | validates all exact inputs and hashes them | source wrapper, pure Bronze |
 | `business_trip_key(record)` | validates probable-key inputs and hashes them | source wrapper, pure Bronze |
 | `spark_canonical_value(column)` | reproduces Python canonical text in Spark | Spark identity builder |
-| `spark_identity_expressions(year)` | returns Spark columns for both hashes and policy | Bronze Glue job |
+| `spark_identity_expressions(year)` | returns Spark columns for both hashes and policy | Bronze Spark job |
 
 Non-obvious behavior:
 
@@ -233,7 +233,7 @@ instances:
 `retry_is_safe()` returns false when immutable identity differs. A completed
 canonical run needs force; an incomplete identical run may proceed.
 
-This state machine is a semantic oracle for tests. Glue jobs implement the
+This state machine is a semantic oracle for tests. EMR Serverless jobs implement the
 durable mutations with Spark SQL against the actual Iceberg table.
 
 Primary verification: `tests/unit/test_nyc_manifest_and_ge.py` and
@@ -481,7 +481,7 @@ Monthly operators:
 | `bronze_ingestion` | `EmrServerlessStartJobOperator` | Bronze EMR Serverless job |
 | `great_expectations_checkpoint` | `EmrServerlessStartJobOperator` | GX EMR Serverless job |
 | `silver_transform` | `EmrServerlessStartJobOperator` | Silver EMR Serverless job |
-| `dbt_build` | Cosmos `DbtTaskGroup` Watcher | dbt-glue build/tests and durable result callback |
+| `dbt_build` | Cosmos `DbtTaskGroup` Watcher | dbt-redshift build/tests and durable result callback |
 | `dbt_result_artifact` | `PythonOperator` | require the callback-uploaded dbt result before reconciliation |
 | `reconciliation` | `EmrServerlessStartJobOperator` | reconciliation EMR Serverless job |
 | `publication_manifest` | `EmrServerlessStartJobOperator` | publication EMR Serverless job |
@@ -512,16 +512,16 @@ publication contract.
 ### `etl/dbt_project/dbt_project.yml`
 
 Declares project/profile names, default month variables, model paths, and
-default Iceberg table materialization.
+default Redshift table materialization.
 
 ### `etl/dbt_project/profiles.yml`
 
 Two targets:
 
-- `glue`: dbt-glue, Glue 4.0, two G.1X workers, Glue Catalog Iceberg and S3
-  Gold path from environment;
-- `ci`: closed local Spark Thrift target for credential-independent
-  parse/compile only.
+- `redshift`: Redshift Serverless IAM authentication, environment-provided
+  endpoint/workgroup/account/region, and local `gold` schema;
+- `ci`: non-routable database credentials used only with introspection and
+  cache population disabled for credential-independent parse/compile.
 
 ### `models_nyc/sources.yml`
 
@@ -666,7 +666,7 @@ directories. It does not install or start the final reviewed Airflow image.
 
 A lightweight JSON evidence validator. It requires structural validation
 success, non-negative counts, Bronze classification equality, and
-Gold-to-Silver equality. It is not the remote Glue reconciliation job.
+Gold-to-Silver equality. It is not the remote EMR Serverless reconciliation job.
 
 ### `scripts/verify_monthly_rerun.py`
 
@@ -715,12 +715,14 @@ full public-access block.
 
 ### `terraform/glue_catalog.tf`
 
-Creates exactly `bronze`, `silver`, `ops`, and `gold`.
+Creates the retained Glue Catalog databases. Bronze, Silver, and Ops remain
+active Iceberg namespaces; the legacy Gold catalog database is not a dbt
+target.
 
 ### `terraform/emr_serverless.tf`
 
-Defines common Iceberg Spark arguments, uploads package and six scripts, and
-creates six Glue 4.0 jobs:
+Defines common Iceberg Spark arguments, uploads the package and six scripts,
+and creates one persistent EMR Serverless Spark application:
 
 - initialize;
 - Bronze;
@@ -729,12 +731,20 @@ creates six Glue 4.0 jobs:
 - Great Expectations;
 - publication.
 
-GX alone adds `great-expectations==1.19.0` as an external Glue module.
+Airflow submits each script to that application; auto-start and auto-stop are
+application settings, not per-DAG lifecycle operations.
+
+### `terraform/redshift_serverless.tf`
+
+Creates one namespace and workgroup, a Spectrum role limited to upstream
+Bronze/Silver S3 and Glue reads, the `bronze_external` and `silver_external`
+schemas, and the local managed `gold` schema. Terraform manages the namespace
+admin password in Secrets Manager; dbt itself uses IAM authentication.
 
 ### `terraform/iam.tf`
 
-Defines service trust and least-scope policies for Glue, Airflow runner, dbt
-Glue sessions, S3 artifact handoffs, and bounded Athena Gold access.
+Defines service trust and least-scope policies for EMR Serverless, Redshift
+Spectrum, the Airflow runner, S3 artifact handoffs, and bounded Athena access.
 
 ### `terraform/athena.tf`
 
@@ -758,12 +768,12 @@ Spark transformations still run remotely.
 ### `requirements-airflow.txt`
 
 Pins the reviewed orchestration runtime: Airflow/providers, Boto3, dbt-core,
-dbt-glue, and Great Expectations.
+dbt-redshift, and Great Expectations.
 
 ### `requirements-ci.txt`
 
-Pins the credential-independent CI environment, including a Spark adapter used
-only for dbt parse/compile.
+Pins the credential-independent CI environment, including the same
+dbt-redshift adapter used by the Airflow image.
 
 ### `requirements.txt`
 

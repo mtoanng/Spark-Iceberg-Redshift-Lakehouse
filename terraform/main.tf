@@ -60,7 +60,7 @@ output "emr_serverless_application_id" {
 
 output "emr_serverless_execution_role_arn" {
   value       = aws_iam_role.emr_serverless_execution.arn
-  description = "EMR Serverless execution role ARN; also retained for dbt-glue sessions."
+  description = "EMR Serverless execution role ARN."
 }
 
 output "spark_script_prefix_uri" {
@@ -71,6 +71,21 @@ output "spark_script_prefix_uri" {
 output "spark_package_uri" {
   value       = "s3://${aws_s3_bucket.lakehouse.id}/${var.spark_package_s3_key}"
   description = "S3 URI for the shared EMR Serverless Python package."
+}
+
+output "redshift_serverless_host" {
+  value       = aws_redshiftserverless_workgroup.gold.endpoint[0].address
+  description = "Private Redshift Serverless endpoint used by dbt-redshift."
+}
+
+output "redshift_serverless_workgroup_name" {
+  value       = aws_redshiftserverless_workgroup.gold.workgroup_name
+  description = "Redshift Serverless workgroup used by dbt-redshift."
+}
+
+output "redshift_database_name" {
+  value       = aws_redshiftserverless_namespace.gold.db_name
+  description = "Redshift database containing the managed Gold schema."
 }
 
 output "airflow_runner_instance_profile" {

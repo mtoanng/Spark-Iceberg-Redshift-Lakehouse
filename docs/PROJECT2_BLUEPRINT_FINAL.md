@@ -14,13 +14,15 @@ official monthly HVFHV Parquet + Taxi Zone CSV
 -> EMR Serverless/PySpark Bronze Iceberg
 -> structural Great Expectations gate
 -> EMR Serverless/PySpark Silver Iceberg + quarantine
--> Cosmos `DbtTaskGroup` -> dbt-glue Gold Iceberg
+-> Redshift Serverless external Bronze/Silver schemas
+-> Cosmos `DbtTaskGroup` -> dbt-redshift managed Gold
 -> reconciliation
 -> snapshot-aware publication JSON
 -> Athena bounded read-only serving
 ```
 
-Glue Data Catalog is canonical metadata; Iceberg on S3 is canonical data.
+Glue Data Catalog is canonical metadata for the Iceberg Bronze, Silver,
+quarantine, and operational layers. Redshift Serverless owns managed Gold.
 
 ## Source and identity
 
@@ -70,8 +72,8 @@ mart_hourly_zone_demand
 mart_operator_metrics
 ```
 
-`fct_trips` is one row per canonical Silver `row_id`; dbt incremental Iceberg
-merge uses `row_id`.
+`fct_trips` is one row per canonical Silver `row_id`; the dbt-redshift
+incremental merge uses `row_id`.
 
 ## Orchestration and retry
 
@@ -130,10 +132,20 @@ automation is in scope.
 ## Deployment boundary
 
 Keep one persistent EMR Serverless Spark application with auto-start/auto-stop,
-Terraform S3/Glue Catalog/IAM/Athena resources, and the optional temporary EC2
-Airflow runner with instance profile. Cosmos is limited to the
-in-process dbt-glue `DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS
-management, dashboards, alarms, or extra buckets.
+one Redshift Serverless namespace/workgroup, Terraform S3/Glue
+Catalog/IAM/Athena resources, and the optional temporary EC2 Airflow runner
+with instance profile. Cosmos is limited to the in-process dbt-redshift
+`DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS management,
+dashboards, alarms, or extra buckets.
+
+### Gold-backend migration boundary
+
+The Gold migration changes the dbt adapter, SQL, profile, and Cosmos runtime
+environment while retaining the DAG dependency chain. The existing Spark
+reconciliation/publication jobs and Athena Gold smoke still implement the
+prior Glue-catalogued Gold Iceberg contract. Their Redshift-aware migration is
+outside this phase, so end-to-end reconciliation, snapshot publication, and
+Athena serving against Redshift-managed Gold remain **NOT VERIFIED**.
 
 `CODEBASE-READY` requires all credential-independent contracts to pass.
 `DEPLOYMENT-VERIFIED` remains `NOT VERIFIED` until a real bounded AWS run
