@@ -1,26 +1,19 @@
-resource "aws_iam_role" "glue_service" {
-  name = "${var.project_name}-${var.environment}-glue"
+resource "aws_iam_role" "emr_serverless_execution" {
+  name = "${var.project_name}-${var.environment}-emr-serverless"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "glue.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = ["emr-serverless.amazonaws.com", "glue.amazonaws.com"] }
+      Action    = "sts:AssumeRole"
     }]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "glue_service" {
-  role       = aws_iam_role.glue_service.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
-}
-
-resource "aws_iam_role_policy" "glue_lakehouse" {
+resource "aws_iam_role_policy" "emr_serverless_lakehouse" {
   name = "${var.project_name}-${var.environment}-lakehouse-access"
-  role = aws_iam_role.glue_service.id
+  role = aws_iam_role.emr_serverless_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -38,7 +31,7 @@ resource "aws_iam_role_policy" "glue_lakehouse" {
         Resource = [
           "${aws_s3_bucket.lakehouse.arn}/${var.landing_prefix}/*",
           "${aws_s3_bucket.lakehouse.arn}/${var.reference_prefix}/*",
-          "${aws_s3_bucket.lakehouse.arn}/glue_jobs/*"
+          "${aws_s3_bucket.lakehouse.arn}/spark_jobs/*"
         ]
       },
       {
@@ -54,11 +47,12 @@ resource "aws_iam_role_policy" "glue_lakehouse" {
         Resource = [
           "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/*",
           "${aws_s3_bucket.lakehouse.arn}/tmp/*",
-          "${aws_s3_bucket.lakehouse.arn}/manifests/*"
+          "${aws_s3_bucket.lakehouse.arn}/manifests/*",
+          "${aws_s3_bucket.lakehouse.arn}/emr-serverless-logs/*"
         ]
       },
       {
-        Sid    = "GlueCatalog"
+        Sid    = "GlueCatalogIcebergMetadata"
         Effect = "Allow"
         Action = [
           "glue:BatchCreatePartition",
@@ -172,10 +166,10 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "InvokeNamedGlueJobs"
+        Sid      = "StartAndObserveEmrServerlessJobs"
         Effect   = "Allow"
-        Action   = ["glue:StartJobRun", "glue:GetJobRun", "glue:GetJobRuns", "glue:GetJob"]
-        Resource = "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:job/${var.project_name}-${var.environment}-*"
+        Action   = ["emr-serverless:StartJobRun", "emr-serverless:GetJobRun", "emr-serverless:CancelJobRun", "emr-serverless:GetApplication"]
+        Resource = aws_emrserverless_application.spark.arn
       },
       {
         Sid    = "RunDbtGlueInteractiveSession"
@@ -192,10 +186,19 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         Resource = "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:session/${var.project_name}-${var.environment}-*"
       },
       {
-        Sid      = "PassGlueRoleToDbtSession"
+        Sid      = "PassEmrServerlessRole"
         Effect   = "Allow"
         Action   = ["iam:PassRole"]
-        Resource = aws_iam_role.glue_service.arn
+        Resource = aws_iam_role.emr_serverless_execution.arn
+        Condition = {
+          StringEquals = { "iam:PassedToService" = "emr-serverless.amazonaws.com" }
+        }
+      },
+      {
+        Sid      = "PassRoleToDbtGlueSession"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = aws_iam_role.emr_serverless_execution.arn
         Condition = {
           StringEquals = { "iam:PassedToService" = "glue.amazonaws.com" }
         }

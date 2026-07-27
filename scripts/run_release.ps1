@@ -4,7 +4,7 @@ param(
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
-python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 $arguments = @('-m', 'scripts.run_e2e', '--year', $Year, '--month', $FirstMonth)
 if ($Force) { $arguments += '--force' }
 python @arguments

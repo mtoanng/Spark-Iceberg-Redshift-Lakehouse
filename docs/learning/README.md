@@ -28,7 +28,7 @@ document and that blueprint disagree, the blueprint wins.
 
 The project takes one checksum-pinned official NYC TLC HVFHV monthly Parquet
 file and Taxi Zone lookup, lands them immutably in S3, orchestrates
-Bronze-to-Gold Iceberg processing with Airflow 3 and Glue 4.0, classifies every
+Bronze-to-Gold Iceberg processing with Airflow 3 and EMR Serverless, classifies every
 Bronze row into either canonical Silver or reason-coded quarantine, publishes
 snapshot-aware evidence only after dbt and reconciliation succeed, and exposes
 only bounded read-only Athena queries.
@@ -69,7 +69,7 @@ generic platform. The first controlled release is one immutable 2024 month.
 Only after that month succeeds does the existing four-month companion DAG run
 four consecutive monthly DAGs.
 
-The baseline deliberately does not include MWAA, Cosmos, EKS, Lake Formation,
+The baseline deliberately does not include MWAA, EKS, Lake Formation,
 Glue 5.1, another query engine, dashboards, ML/AI, or an Iceberg maintenance
 suite. The optional temporary EC2 runner with an instance profile remains the
 Airflow deployment model. This boundary keeps cost, permissions, recovery,
@@ -112,14 +112,15 @@ prepare_month
 -> bronze_ingestion
 -> great_expectations_checkpoint
 -> silver_transform
--> dbt_build
+-> Cosmos `dbt_build` task group
+-> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
 -> athena_smoke
 ```
 
 The DAG is manual, accepts `year`, `month`, and `force`, permits only one active
-monthly run, and gives tasks two Airflow retries by default. Glue jobs perform
+monthly run, and gives tasks two Airflow retries by default. EMR Serverless jobs perform
 distributed work; the DAG passes arguments and waits for completion.
 
 ### 3.3 Metadata and state plane
@@ -165,7 +166,7 @@ s3://<bucket>/
     silver/
     ops/
     gold/
-  glue_jobs/             Glue entry scripts and shared Python zip
+  spark_jobs/            EMR Serverless PySpark entry scripts and shared Python zip
   manifests/             dbt results and publication JSON
   athena-results/        Athena output only
   tmp/                   Glue temporary files
@@ -430,18 +431,21 @@ validation status remains passed. It:
 11. replaces requested Silver and quarantine partitions;
 12. captures both snapshot IDs and changes state to `silver_published`.
 
-### Step 5: `dbt_build`
+### Step 5: Cosmos `dbt_build` and `dbt_result_artifact`
 
-The Airflow runner changes into `etl/dbt_project` and runs `dbt build` against
-the Glue target with explicit month variables. dbt:
+Cosmos `DbtTaskGroup` runs one Watcher-mode `dbt build` producer against the
+Glue target with explicit month variables. The resulting model watchers expose
+each model/test outcome in Airflow while dbt:
 
 - builds/tests three dimensions;
 - merges the requested month into `fct_trips` by `row_id`;
 - rebuilds/tests two marts;
 - executes the singular fact-to-Silver reconciliation test.
 
-After success, Airflow copies `target/run_results.json` to the publication S3
-prefix and pushes that durable URI through XCom.
+After a successful full producer run, its Cosmos callback copies
+`target/run_results.json` to the deterministic publication S3 prefix. The
+separate `dbt_result_artifact` task requires that object to be non-empty and
+SHA-256-tagged, then returns its durable URI through XCom.
 
 ### Step 6: `reconciliation`
 
@@ -580,7 +584,7 @@ Until a retained controlled AWS run exists, the following remain
 
 - Terraform apply and real resource creation;
 - source upload into the target account;
-- Glue 4.0 execution and CloudWatch behavior;
+- EMR Serverless execution and CloudWatch behavior;
 - actual Iceberg writes, partitions, and snapshot IDs;
 - Great Expectations inside Glue;
 - dbt-glue interactive session and model execution;
@@ -624,6 +628,6 @@ next task.
    investigation decision?
 2. How do Great Expectations, Silver quarantine, reconciliation, and
    publication each prevent a different failure from becoming served data?
-3. After `dbt_build` succeeds, what exact evidence must exist before the
+3. After the Cosmos `dbt_build` group succeeds, what exact evidence must exist before the
    operational manifest may become `published`, and what does Athena verify
    afterward?

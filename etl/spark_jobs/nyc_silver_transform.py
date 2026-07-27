@@ -1,12 +1,7 @@
 """Month-scoped Silver/quarantine publication guarded by Great Expectations."""
 
-import sys
-
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
 from pyspark.sql import Window
+from pyspark.sql import SparkSession
 from pyspark.storagelevel import StorageLevel
 from pyspark.sql.functions import (
     col,
@@ -21,15 +16,21 @@ from pyspark.sql.functions import (
 
 from etl.contracts.nyc_hvfhs_identity import identity_policy_version
 from etl.contracts.nyc_hvfhs_quality import spark_reason_expression
+from etl.spark_jobs.arguments import parse_arguments
 
-args = getResolvedOptions(
-    sys.argv, ["JOB_NAME", "SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"]
+args = parse_arguments(
+    ["SOURCE_YEAR", "SOURCE_MONTH", "INGESTION_RUN_ID"],
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "BRONZE_DATABASE": "bronze",
+        "SILVER_DATABASE": "silver",
+        "OPS_DATABASE": "ops",
+    },
 )
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def _table(namespace: str, name: str) -> str:
@@ -47,10 +48,7 @@ SILVER_TRIPS_TABLE, QUARANTINE_TABLE, MANIFEST_TABLE = (
 
 
 def main() -> None:
-    glue_context = GlueContext(SparkContext.getOrCreate())
-    job = Job(glue_context)
-    job.init(args["JOB_NAME"], args)
-    spark = glue_context.spark_session
+    spark = SparkSession.builder.getOrCreate()
     spark.conf.set("spark.sql.session.timeZone", "UTC")
     year, month, run_id = (
         int(args["SOURCE_YEAR"]),
@@ -201,7 +199,6 @@ def main() -> None:
             f"WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
         )
         classified.unpersist()
-        job.commit()
     except Exception as error:
         if "classified" in locals():
             classified.unpersist()

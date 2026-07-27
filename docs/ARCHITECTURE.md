@@ -4,19 +4,23 @@
 flowchart LR
   TLC[Immutable TLC month] --> S3[S3 landing]
   S3 --> AF[Airflow 3]
-  AF --> B[Glue 4.0 Bronze Iceberg]
+  AF --> B[EMR Serverless Bronze Iceberg]
   B --> GE[Structural GE gate]
-  GE --> S[Glue 4.0 Silver]
+  GE --> S[EMR Serverless Silver]
   S --> Q[Quarantine]
-  S --> G[Six dbt-glue Gold models]
+  S --> C[Cosmos DbtTaskGroup]
+  C --> G[Six dbt-glue Gold models]
   G --> R[Reconciliation]
   R --> P[Snapshot-aware JSON publication]
   P --> A[Bounded Athena]
 ```
 
 Airflow is the single orchestrator. The first runner remains disposable EC2
-with instance-profile authentication. Glue 4.0 runs Bronze, GE, Silver,
-reconciliation, and publication. dbt-glue owns only the six Gold relations.
+with instance-profile authentication. One persistent EMR Serverless application
+runs Bronze, GE, Silver, reconciliation, and publication; Glue Data Catalog
+remains Iceberg metadata only. Cosmos owns dbt orchestration only: its
+Watcher-mode producer runs the full build and archives `run_results.json`; its
+model watchers expose progress. dbt-glue owns only the six Gold relations.
 
 Bronze is source-faithful. GE is structural. Silver is the only row-level
 classification owner. Gold is one canonical fact graph. Publication is an

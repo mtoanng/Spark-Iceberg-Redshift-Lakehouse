@@ -17,7 +17,7 @@ reviewed plan lowers it.
 ## 1. Review and plan
 
 ```powershell
-python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform fmt -check -recursive
 terraform -chdir=terraform validate
@@ -121,10 +121,13 @@ Verify each task in order:
    without record loss.
 3. `great_expectations_checkpoint`: required columns and non-empty month pass.
 4. `silver_transform`: valid rows plus reason-coded quarantine.
-5. `dbt_build`: six Gold models, with explicit month variables.
-6. `reconciliation`: Bronze = Silver + quarantine and fact = Silver.
-7. `publication_manifest`: deterministic manifest URI and `published` status.
-8. `athena_smoke`: expected Gold tables/columns, non-empty filtered result,
+5. `dbt_build`: Cosmos Watcher producer and model watchers complete six Gold
+   models/tests using the explicit month variables.
+6. `dbt_result_artifact`: a non-empty, SHA-256-tagged complete
+   `run_results.json` exists at the deterministic publication-prefix URI.
+7. `reconciliation`: Bronze = Silver + quarantine and fact = Silver.
+8. `publication_manifest`: deterministic manifest URI and `published` status.
+9. `athena_smoke`: expected Gold tables/columns, non-empty filtered result,
    and bytes scanned below the configured cutoff.
 
 Stop at the first failure. Preserve the run ID, Glue logs, manifest state, and

@@ -4,7 +4,7 @@
 
 1. Configure only role-based credentials/instance profile.
 2. Pin official source URI, SHA-256, byte size, and Taxi Zone checksum.
-3. Build `build/nyc_glue_jobs.zip`.
+3. Build `build/nyc_spark_jobs.zip`.
 4. Run Python, dbt, DAG, Terraform, packaging, hygiene, and secret checks.
 5. Review `terraform plan`; do not apply without separate approval.
 

@@ -22,7 +22,7 @@ FORBIDDEN_TRACKED_PARTS = {
 FORBIDDEN_SUFFIXES = {".tfplan", ".tfstate", ".pyc", ".duckdb", ".parquet"}
 AWS_ACCESS_KEY = re.compile(rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 REQUIRED_TRACKABLE = (
-    "scripts/package_glue_jobs.py",
+    "scripts/package_spark_jobs.py",
     "scripts/bootstrap_airflow_runner.sh",
     "scripts/check_repository_hygiene.py",
 )

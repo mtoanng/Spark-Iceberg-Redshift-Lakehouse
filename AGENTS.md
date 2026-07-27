@@ -6,15 +6,16 @@ Read `docs/PROJECT2_BLUEPRINT_FINAL.md` before editing. Active architecture:
 
 ```text
 immutable NYC TLC HVFHV month + Taxi Zones
--> S3 landing -> Airflow 3 -> Glue 4.0/PySpark Bronze
+-> S3 landing -> Airflow 3 -> EMR Serverless/PySpark Bronze
 -> structural Great Expectations gate
--> Glue 4.0/PySpark Silver + quarantine
--> dbt-glue Gold -> reconciliation -> snapshot-aware publication
+-> EMR Serverless/PySpark Silver + quarantine
+-> Cosmos `DbtTaskGroup` -> dbt-glue Gold -> reconciliation -> snapshot-aware publication
 -> bounded read-only Athena
 ```
 
 The current temporary EC2/instance-profile Airflow runner remains the deployment
-model for the first baseline. Do not add Cosmos, MWAA, EKS, Glue 5.1, Lake
+model for the first baseline. Cosmos is permitted only as the in-process
+`DbtTaskGroup` integration for dbt-glue; do not add MWAA, EKS, Glue 5.1, Lake
 Formation, ML/AI, dashboards, another query engine, or an Iceberg maintenance
 suite.
 

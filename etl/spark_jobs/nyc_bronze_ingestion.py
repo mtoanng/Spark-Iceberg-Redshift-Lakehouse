@@ -1,13 +1,9 @@
-"""Month-scoped, retry-safe Glue Bronze ingestion for NYC HVFHV sources."""
+"""Month-scoped, retry-safe EMR Serverless Bronze ingestion for NYC HVFHV."""
 
-import sys
 from urllib.parse import urlparse
 
 import boto3
-from awsglue.context import GlueContext
-from awsglue.job import Job
-from awsglue.utils import getResolvedOptions
-from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
 from pyspark.storagelevel import StorageLevel
 from pyspark.sql.functions import current_timestamp, input_file_name, lit
 
@@ -21,10 +17,10 @@ from etl.sources.nyc_hvfhs import (
     validate_landed_source,
     validate_trip_schema,
 )
+from etl.spark_jobs.arguments import parse_arguments
 
 
 REQUIRED_ARGS = [
-    "JOB_NAME",
     "SOURCE_URI",
     "SOURCE_YEAR",
     "SOURCE_MONTH",
@@ -34,12 +30,19 @@ REQUIRED_ARGS = [
     "TAXI_ZONE_CHECKSUM",
     "SOURCE_SIZE_BYTES",
 ]
-args = getResolvedOptions(sys.argv, REQUIRED_ARGS)
+args = parse_arguments(
+    REQUIRED_ARGS,
+    {
+        "CATALOG_NAME": "glue_catalog",
+        "BRONZE_DATABASE": "bronze",
+        "OPS_DATABASE": "ops",
+        "FORCE": "false",
+    },
+)
 
 
 def _optional_arg(name: str, default: str) -> str:
-    flag = f"--{name}"
-    return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
+    return args.get(name, default)
 
 
 def _table(namespace: str, name: str) -> str:
@@ -193,10 +196,7 @@ def main() -> None:
         for character in args["TAXI_ZONE_CHECKSUM"]
     ):
         raise ValueError("TAXI_ZONE_CHECKSUM must be a SHA-256 hex digest.")
-    glue_context = GlueContext(SparkContext.getOrCreate())
-    job = Job(glue_context)
-    job.init(args["JOB_NAME"], args)
-    spark = glue_context.spark_session
+    spark = SparkSession.builder.getOrCreate()
     spark.conf.set("spark.sql.session.timeZone", "UTC")
     trips_cached = False
     try:
@@ -207,7 +207,6 @@ def main() -> None:
         )
         _verify_landed_object(args["TAXI_ZONE_URI"], args["TAXI_ZONE_CHECKSUM"])
         if not _may_process(spark):
-            job.commit()
             return
         source_frame = spark.read.parquet(args["SOURCE_URI"])
         validate_trip_schema(source_frame.columns, int(args["SOURCE_YEAR"]))
@@ -254,7 +253,6 @@ def main() -> None:
             bronze_count=bronze_count,
             bronze_snapshot_id=bronze_snapshot_id,
         )
-        job.commit()
     except Exception as error:
         if trips_cached:
             trips.unpersist()

@@ -35,7 +35,7 @@ created. CI performs:
 python scripts/check_repository_hygiene.py
 python -m compileall -q athena etl scripts tests
 python -m pytest -p no:cacheprovider tests/unit tests/contract -q
-python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 ```
 
 It also parses all PowerShell, runs `bash -n` on the runner bootstrap, performs
@@ -44,21 +44,21 @@ target, and runs Terraform format/init/validate.
 
 Success means `CODEBASE-READY`. It does not mean deployed.
 
-## 3. Deterministic Glue artifact
+## 3. Deterministic Spark artifact
 
-`scripts/package_glue_jobs.py` scans active Python under `etl/`, excludes DAGs
+`scripts/package_spark_jobs.py` scans active Python under `etl/`, excludes DAGs
 and caches, pins zip entry timestamps to 1980-01-01, and embeds
-`glue_runtime_manifest.json`.
+`spark_runtime_manifest.json`.
 
 Why this precedes Terraform:
 
-- `terraform/glue_jobs.tf` calls `filemd5()` on the local zip;
-- Terraform uploads the zip to `glue_jobs/nyc_glue_jobs.zip`;
-- every Glue job receives that S3 object as `--extra-py-files`;
-- the entry script remains separate so Glue has a direct `script_location`.
+- `terraform/emr_serverless.tf` calls `filemd5()` on the local zip;
+- Terraform uploads the zip to `spark_jobs/nyc_spark_jobs.zip`;
+- every EMR Serverless submission receives it through `--py-files`;
+- the entry script remains separate so Spark has a direct S3 entry point.
 
 The package includes shared contracts. The Airflow DAG is excluded because it
-runs on the Airflow runner, not inside Glue.
+runs on the Airflow runner, not inside EMR Serverless.
 
 ## 4. Terraform plan and resource graph
 
@@ -127,17 +127,10 @@ The initializer creates upstream Iceberg tables. dbt creates Gold model tables.
 
 ### Glue jobs
 
-| Terraform output key | AWS job suffix | Entrypoint |
-| --- | --- | --- |
-| `initialize` | `-initialize` | `initialize_nyc_iceberg_tables.py` |
-| `bronze` | `-bronze` | `nyc_bronze_ingestion.py` |
-| `great_expectations` | `-great-expectations` | `nyc_great_expectations_checkpoint.py` |
-| `silver` | `-silver` | `nyc_silver_transform.py` |
-| `reconciliation` | `-reconciliation` | `nyc_quality_checkpoint.py` |
-| `publication` | `-publication` | `nyc_publish_manifest.py` |
-
-All are Glue 4.0 with bounded workers and timeouts. Bronze and Silver have one
-Glue-level retry. Airflow adds its own task retry boundary.
+One pre-created EMR Serverless Spark application auto-starts on submission and
+auto-stops after its bounded idle period. Every entrypoint is an S3 script and
+uses the same versioned Python package. Airflow owns retry boundaries; the
+application is never created or deleted by a DAG run.
 
 ### Athena
 
@@ -360,20 +353,22 @@ one classified frame
 
 This is where row-level business behavior belongs.
 
-### `dbt_build`
+### Cosmos `dbt_build` and `dbt_result_artifact`
 
-The command runs on EC2, but transformation runs through dbt-glue. The explicit
-vars bind the fact merge to the current month. A successful build must also
+Cosmos runs a single Watcher-mode dbt producer on EC2, while dbt-glue performs
+the transformation. Model watchers make the build visible in Airflow. Explicit
+vars bind the fact merge to the current month, and a successful build must also
 pass dbt tests.
 
-Airflow then copies:
+The producer callback then copies the complete artifact, and the downstream
+`dbt_result_artifact` task verifies that it exists and has SHA-256 metadata:
 
 ```text
 etl/dbt_project/target/run_results.json
 -> s3://<bucket>/manifests/dbt-results/year=YYYY/month=MM/<run-id>.json
 ```
 
-The resulting S3 URI is XCom output for publication.
+The verified S3 URI is XCom output for publication.
 
 ### `reconciliation`
 
