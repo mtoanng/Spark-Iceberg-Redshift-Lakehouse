@@ -1,4 +1,5 @@
 # AWS Iceberg Athena Lakehouse
+<img width="1157" height="577" alt="image" src="https://github.com/user-attachments/assets/01481f0a-9698-4ff4-82b7-c534a473f151" />
 
 Replayable monthly NYC TLC HVFHV lakehouse:
 
