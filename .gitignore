@@ -111,6 +111,7 @@ temp/
 *.tar.gz
 *.tgz
 scratch/
+docs/
 
 # Documentation build output
 site/
