@@ -33,7 +33,7 @@ def build(output: Path) -> dict[str, object]:
         "artifact": "nyc_spark_jobs",
         "format": "zip",
         "entrypoints": [
-            "etl/spark_jobs/initialize_nyc_iceberg_tables.py",
+            "etl/spark_jobs/apply_nyc_2025_schema_evolution.py",
             "etl/spark_jobs/nyc_bronze_ingestion.py",
             "etl/spark_jobs/nyc_silver_transform.py",
         ],

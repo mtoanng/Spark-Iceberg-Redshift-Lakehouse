@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 import boto3
 
-from athena.query_runner import AthenaQueryRunner
 from etl.publication.nyc_hvfhs import (
     build_publication_document,
     canonical_json,
@@ -24,19 +23,6 @@ def _bucket_key(uri: str) -> tuple[str, str]:
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/"):
         raise ValueError(f"Expected a non-empty s3:// URI, got {uri!r}")
     return parsed.netloc, parsed.path.lstrip("/")
-
-
-def _latest_snapshot_id(
-    runner: AthenaQueryRunner, *, database: str, table: str, workgroup: str
-) -> str | None:
-    result = runner.run(
-        f'SELECT snapshot_id FROM "{table}$snapshots" '
-        "ORDER BY committed_at DESC LIMIT 1",
-        database=database,
-        workgroup=workgroup,
-        client_request_token=f"nyc-publication-snapshot-{database}-{table}",
-    )
-    return str(result.rows[0][0]) if result.rows else None
 
 
 def _dbt_artifact(s3_client: Any, uri: str) -> tuple[dict[str, Any], str]:
@@ -75,10 +61,8 @@ def publish_month(
     reconciliation: Mapping[str, object],
     dbt_result_uri: str,
     publication_prefix_uri: str,
-    athena_workgroup: str,
     redshift_database: str,
     redshift_schema: str = "gold",
-    athena_runner: AthenaQueryRunner | None = None,
     s3_client: Any | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -86,38 +70,35 @@ def publish_month(
 
     year, month = int(audit["source_year"]), int(audit["source_month"])
     run_id = str(audit["run_id"])
+    if (
+        int(reconciliation.get("source_year", -1)) != year
+        or int(reconciliation.get("source_month", -1)) != month
+        or str(reconciliation.get("ingestion_run_id", "")) != run_id
+    ):
+        raise ValueError("Reconciliation identity does not match the source audit.")
     s3 = s3_client or boto3.client("s3")
     _, dbt_checksum = _dbt_artifact(s3, dbt_result_uri)
-    runner = athena_runner or AthenaQueryRunner()
+    snapshot_ids = reconciliation.get("iceberg_snapshot_ids", {})
+    if not isinstance(snapshot_ids, Mapping) or set(snapshot_ids) != {
+        "bronze",
+        "silver",
+        "quarantine",
+    }:
+        raise ValueError("Publication requires exact snapshot IDs from reconciliation.")
     iceberg_layers = {
         "bronze": {
             "table_identifier": "bronze.bronze_hvfhs_trips",
-            "snapshot_id": _latest_snapshot_id(
-                runner,
-                database="bronze",
-                table="bronze_hvfhs_trips",
-                workgroup=athena_workgroup,
-            ),
+            "snapshot_id": snapshot_ids["bronze"],
             "row_count": reconciliation["bronze_row_count"],
         },
         "silver": {
             "table_identifier": "silver.silver_trips",
-            "snapshot_id": _latest_snapshot_id(
-                runner,
-                database="silver",
-                table="silver_trips",
-                workgroup=athena_workgroup,
-            ),
+            "snapshot_id": snapshot_ids["silver"],
             "row_count": reconciliation["silver_row_count"],
         },
         "quarantine": {
             "table_identifier": "silver.quarantine_trips",
-            "snapshot_id": _latest_snapshot_id(
-                runner,
-                database="silver",
-                table="quarantine_trips",
-                workgroup=athena_workgroup,
-            ),
+            "snapshot_id": snapshot_ids["quarantine"],
             "row_count": reconciliation["quarantine_row_count"],
         },
     }

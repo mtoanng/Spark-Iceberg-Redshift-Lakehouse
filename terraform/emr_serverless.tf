@@ -20,7 +20,7 @@ resource "aws_s3_object" "spark_package" {
 
 resource "aws_s3_object" "spark_script" {
   for_each = toset([
-    "initialize_nyc_iceberg_tables.py",
+    "apply_nyc_2025_schema_evolution.py",
     "nyc_bronze_ingestion.py",
     "nyc_silver_transform.py",
   ])

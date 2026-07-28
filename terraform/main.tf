@@ -88,12 +88,38 @@ output "redshift_database_name" {
   description = "Redshift database containing the managed Gold schema."
 }
 
-output "airflow_runner_instance_profile" {
-  value       = var.airflow_runner_ami_id == "" ? null : aws_iam_instance_profile.airflow_runner[0].name
-  description = "Instance profile used by the optional temporary Airflow runner."
+output "mwaa_environment_name" {
+  value       = aws_mwaa_environment.orchestration.name
+  description = "Regular MWAA environment that owns pipeline orchestration."
+}
+
+output "mwaa_webserver_url" {
+  value       = aws_mwaa_environment.orchestration.webserver_url
+  description = "Private regular MWAA webserver URL."
 }
 
 output "publication_prefix_uri" {
   value       = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
   description = "Month-partitioned publication-manifest prefix."
+}
+
+output "airflow_variables" {
+  description = "Non-secret variables to import into regular MWAA before the first DAG run."
+  value = {
+    nyc_landing_uri                       = "s3://${aws_s3_bucket.lakehouse.id}/${var.landing_prefix}"
+    nyc_taxi_zone_uri                     = "s3://${aws_s3_bucket.lakehouse.id}/${var.reference_prefix}/taxi_zone_lookup.csv"
+    nyc_emr_serverless_application_id     = aws_emrserverless_application.spark.id
+    nyc_emr_serverless_execution_role_arn = aws_iam_role.emr_serverless_execution.arn
+    nyc_spark_script_prefix_uri           = "s3://${aws_s3_bucket.lakehouse.id}/spark_jobs"
+    nyc_spark_package_uri                 = "s3://${aws_s3_bucket.lakehouse.id}/${var.spark_package_s3_key}"
+    nyc_emr_serverless_log_uri            = "s3://${aws_s3_bucket.lakehouse.id}/emr-serverless-logs"
+    nyc_warehouse_uri                     = "s3://${aws_s3_bucket.lakehouse.id}/${var.warehouse_prefix}"
+    athena_workgroup                      = aws_athena_workgroup.iceberg_verify.name
+    nyc_publication_prefix_uri            = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
+    redshift_host                         = aws_redshiftserverless_workgroup.gold.endpoint[0].address
+    redshift_database                     = aws_redshiftserverless_namespace.gold.db_name
+    redshift_workgroup_name               = aws_redshiftserverless_workgroup.gold.workgroup_name
+    aws_account_id                        = data.aws_caller_identity.current.account_id
+    aws_region                            = var.aws_region
+  }
 }

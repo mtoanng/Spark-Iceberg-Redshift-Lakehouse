@@ -76,6 +76,29 @@ resource "aws_redshiftserverless_workgroup" "gold" {
   workgroup_name      = "${var.project_name}-${var.environment}"
   base_capacity       = 8
   publicly_accessible = false
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.redshift.id]
+}
+
+resource "aws_security_group" "redshift" {
+  name        = "${var.project_name}-${var.environment}-redshift"
+  description = "Redshift Serverless access from the MWAA execution environment."
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "dbt and verification from MWAA"
+    from_port       = 5439
+    to_port         = 5439
+    protocol        = "tcp"
+    security_groups = [aws_security_group.mwaa.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 resource "aws_redshiftdata_statement" "bronze_external_schema" {
@@ -100,4 +123,67 @@ resource "aws_redshiftdata_statement" "gold_schema" {
   secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
   statement_name = "create-gold-schema"
   sql            = "CREATE SCHEMA IF NOT EXISTS gold"
+}
+
+locals {
+  mwaa_redshift_user = "IAMR:${aws_iam_role.mwaa_execution.name}"
+}
+
+resource "aws_redshiftdata_statement" "mwaa_database_user" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "create-mwaa-iam-user"
+  sql            = "CREATE USER \"${local.mwaa_redshift_user}\" PASSWORD DISABLE"
+
+  depends_on = [aws_redshiftdata_statement.gold_schema]
+}
+
+resource "aws_redshiftdata_statement" "mwaa_bronze_usage" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "grant-mwaa-bronze-usage"
+  sql            = "GRANT USAGE ON SCHEMA bronze_external TO \"${local.mwaa_redshift_user}\""
+
+  depends_on = [
+    aws_redshiftdata_statement.bronze_external_schema,
+    aws_redshiftdata_statement.mwaa_database_user,
+  ]
+}
+
+resource "aws_redshiftdata_statement" "mwaa_silver_usage" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "grant-mwaa-silver-usage"
+  sql            = "GRANT USAGE ON SCHEMA silver_external TO \"${local.mwaa_redshift_user}\""
+
+  depends_on = [
+    aws_redshiftdata_statement.silver_external_schema,
+    aws_redshiftdata_statement.mwaa_database_user,
+  ]
+}
+
+resource "aws_redshiftdata_statement" "mwaa_gold_owner" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "grant-mwaa-gold-owner"
+  sql            = "GRANT CREATE, USAGE ON SCHEMA gold TO \"${local.mwaa_redshift_user}\""
+
+  depends_on = [
+    aws_redshiftdata_statement.gold_schema,
+    aws_redshiftdata_statement.mwaa_database_user,
+  ]
+}
+
+resource "aws_redshiftdata_statement" "mwaa_temp_tables" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "grant-mwaa-temp-tables"
+  sql            = "GRANT TEMP ON DATABASE ${aws_redshiftserverless_namespace.gold.db_name} TO \"${local.mwaa_redshift_user}\""
+
+  depends_on = [aws_redshiftdata_statement.mwaa_database_user]
 }

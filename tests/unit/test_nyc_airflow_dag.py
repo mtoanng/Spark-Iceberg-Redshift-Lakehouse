@@ -49,14 +49,6 @@ def _fake_airflow_modules(monkeypatch):
             self.downstream_task_ids.add(other.task_id)
             return other
 
-    class FakeDbtTaskGroup(FakeOperator):
-        def __init__(self, *, group_id, **kwargs):
-            super().__init__(task_id=group_id, **kwargs)
-
-    class FakeConfig:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
     class FakeVariable:
         @staticmethod
         def get(_):
@@ -80,23 +72,14 @@ def _fake_airflow_modules(monkeypatch):
         "airflow.providers.standard.operators.python": types.SimpleNamespace(
             PythonOperator=FakeOperator
         ),
+        "airflow.providers.standard.operators.bash": types.SimpleNamespace(
+            BashOperator=FakeOperator
+        ),
         "airflow.providers.standard.operators.trigger_dagrun": types.SimpleNamespace(
             TriggerDagRunOperator=FakeOperator
         ),
         "airflow.providers.amazon.aws.operators.emr": types.SimpleNamespace(
             EmrServerlessStartJobOperator=FakeOperator
-        ),
-        "cosmos": types.SimpleNamespace(DbtTaskGroup=FakeDbtTaskGroup),
-        "cosmos.config": types.SimpleNamespace(
-            ExecutionConfig=FakeConfig,
-            ProfileConfig=FakeConfig,
-            ProjectConfig=FakeConfig,
-            RenderConfig=FakeConfig,
-        ),
-        "cosmos.constants": types.SimpleNamespace(
-            ExecutionMode=types.SimpleNamespace(WATCHER="watcher"),
-            InvocationMode=types.SimpleNamespace(SUBPROCESS="subprocess"),
-            TestBehavior=types.SimpleNamespace(BUILD="build"),
         ),
     }
     for name, module in modules.items():
@@ -124,7 +107,7 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     ]
     assert monthly.params["year"].default == 2024
     assert monthly.params["month"].default == 1
-    assert monthly.params["force"].default is False
+    assert set(monthly.params) == {"year", "month"}
     assert monthly.tasks[0].downstream_task_ids == {"bronze_ingestion_emr"}
     assert monthly.tasks[1].downstream_task_ids == {"silver_transform_emr"}
     assert all(monthly.tasks[index].kwargs["aws_conn_id"] is None for index in (1, 2))
@@ -144,24 +127,14 @@ def test_airflow_dag_import_and_manual_topology(monkeypatch) -> None:
     assert monthly.tasks[5].kwargs["python_callable"].__name__ == "reconcile_month"
     assert monthly.tasks[6].kwargs["python_callable"].__name__ == "publish_month"
     assert monthly.tasks[7].kwargs["python_callable"].__name__ == "verify_month"
-    dbt_group = monthly.tasks[3]
-    assert (
-        dbt_group.kwargs["project_config"].kwargs["dbt_project_path"].name
-        == "dbt_project"
+    dbt_task = monthly.tasks[3]
+    assert dbt_task.kwargs["bash_command"] == (
+        "python -m etl.orchestration.nyc_hvfhs_dbt"
     )
-    assert dbt_group.kwargs["profile_config"].kwargs["target_name"] == "redshift"
-    assert dbt_group.kwargs["render_config"].kwargs["test_behavior"] == "build"
-    assert dbt_group.kwargs["execution_config"].kwargs["execution_mode"] == "watcher"
-    assert (
-        "archive_dbt_run_results"
-        in dbt_group.kwargs["execution_config"].kwargs["setup_operator_args"][
-            "callback"
-        ]
+    assert dbt_task.kwargs["append_env"] is True
+    assert {"DBT_SOURCE_YEAR", "DBT_SOURCE_MONTH", "DBT_RUN_ID"} <= set(
+        dbt_task.kwargs["env"]
     )
-    assert set(dbt_group.kwargs["operator_args"]["vars"]) == {
-        "source_year",
-        "source_month",
-    }
 
     backfill = module.nyc_hvfhs_four_month_backfill_dag
     assert [task.task_id for task in backfill.tasks] == [

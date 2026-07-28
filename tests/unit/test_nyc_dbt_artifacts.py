@@ -1,14 +1,15 @@
-"""Contracts for the durable Cosmos dbt artifact handoff."""
+"""Contracts for the atomic dbt build artifact handoff."""
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
 import pytest
 
-from etl.orchestration.nyc_hvfhs_cosmos import (
-    archive_dbt_run_results_for_run,
+from etl.orchestration.nyc_hvfhs_dbt import (
+    archive_dbt_run_results,
     require_dbt_result_artifact,
 )
 
@@ -24,20 +25,27 @@ class FakeS3:
         try:
             item = self.objects[(Bucket, Key)]
         except KeyError as error:
-            raise RuntimeError("not found") from error
+            error.response = {"Error": {"Code": "404"}}
+            raise
         return {"ContentLength": len(item["Body"]), "Metadata": item["Metadata"]}
 
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        return {"Body": io.BytesIO(self.objects[(Bucket, Key)]["Body"])}
 
-def _run_results(status: str = "success") -> bytes:
+
+def _run_results(status: str = "success", *, result_count: int = 1) -> bytes:
     return json.dumps(
         {
             "metadata": {"invocation_id": "dbt-invocation"},
-            "results": [{"status": status, "unique_id": "model.gold.dim_date"}],
+            "results": [
+                {"status": status, "unique_id": f"model.gold.model_{index}"}
+                for index in range(result_count)
+            ],
         }
     ).encode()
 
 
-def test_cosmos_callback_archives_and_downstream_task_requires_result(
+def test_dbt_build_archives_and_downstream_task_requires_result(
     tmp_path: Path,
 ) -> None:
     artifact = tmp_path / "target" / "run_results.json"
@@ -45,7 +53,7 @@ def test_cosmos_callback_archives_and_downstream_task_requires_result(
     artifact.write_bytes(_run_results())
     s3 = FakeS3()
 
-    uri = archive_dbt_run_results_for_run(
+    uri = archive_dbt_run_results(
         tmp_path,
         publication_prefix_uri="s3://example/manifests/",
         source_year=2024,
@@ -70,7 +78,24 @@ def test_cosmos_callback_archives_and_downstream_task_requires_result(
     assert len(stored["Metadata"]["sha256"]) == 64
 
 
-def test_cosmos_callback_rejects_failed_or_incomplete_run_results(
+def test_dbt_build_accepts_multiple_successful_results(tmp_path: Path) -> None:
+    artifact = tmp_path / "target" / "run_results.json"
+    artifact.parent.mkdir()
+    artifact.write_bytes(_run_results(result_count=6))
+
+    uri = archive_dbt_run_results(
+        tmp_path,
+        publication_prefix_uri="s3://example/manifests",
+        source_year=2024,
+        source_month=1,
+        run_id="stable-run",
+        s3_client=FakeS3(),
+    )
+
+    assert uri.endswith("/stable-run.json")
+
+
+def test_dbt_build_rejects_failed_or_incomplete_run_results(
     tmp_path: Path,
 ) -> None:
     artifact = tmp_path / "target" / "run_results.json"
@@ -78,7 +103,7 @@ def test_cosmos_callback_rejects_failed_or_incomplete_run_results(
     artifact.write_bytes(_run_results("error"))
 
     with pytest.raises(ValueError, match="non-success"):
-        archive_dbt_run_results_for_run(
+        archive_dbt_run_results(
             tmp_path,
             publication_prefix_uri="s3://example/manifests",
             source_year=2024,

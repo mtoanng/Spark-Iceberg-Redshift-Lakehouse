@@ -58,6 +58,8 @@ def main() -> None:
     status = spark.sql(
         f"SELECT run_status, failure_stage FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
     ).collect()
+    if status and status[0].run_status == "silver_published":
+        return
     retrying_silver = bool(status) and (
         status[0].run_status == "failed" and status[0].failure_stage == "silver"
     )
@@ -82,7 +84,6 @@ def main() -> None:
             )
         zones = (
             spark.table(BRONZE_ZONES_TABLE)
-            .filter((col("_source_year") == year) & (col("_source_month") == month))
             .select(col("LocationID").cast("int").alias("zone_id"))
             .distinct()
         )
@@ -130,7 +131,7 @@ def main() -> None:
         quarantine = classified.filter(col("reason_code").isNotNull()).drop(
             "_trip_row_number", "_already_published"
         )
-        silver = classified.filter(col("reason_code").isNull()).select(
+        silver_columns = [
             "row_id",
             "business_trip_key",
             "identity_policy_version",
@@ -161,11 +162,12 @@ def main() -> None:
             ).alias("trip_duration_minutes"),
             to_date("pickup_datetime").alias("pickup_date"),
             hour("pickup_datetime").alias("pickup_hour"),
-        )
+        ]
         if "cbd_congestion_fee" in trips.columns:
-            silver = silver.withColumn(
-                "cbd_congestion_fee", col("cbd_congestion_fee").cast("double")
+            silver_columns.append(
+                col("cbd_congestion_fee").cast("double").alias("cbd_congestion_fee")
             )
+        silver = classified.filter(col("reason_code").isNull()).select(*silver_columns)
         counts = classified.agg(
             count(lit(1)).alias("bronze_count"),
             spark_sum(when(col("reason_code").isNull(), 1).otherwise(0)).alias(
@@ -189,6 +191,8 @@ def main() -> None:
             f"SELECT snapshot_id FROM {QUARANTINE_TABLE}.snapshots "
             "ORDER BY committed_at DESC LIMIT 1"
         ).first()
+        if silver_snapshot is None or quarantine_snapshot is None:
+            raise ValueError("Silver publication must expose both Iceberg snapshots.")
         spark.sql(
             f"UPDATE {MANIFEST_TABLE} SET run_status='silver_published', silver_row_count={silver_count}, "
             f"quarantine_row_count={quarantine_count}, silver_snapshot_id='{silver_snapshot.snapshot_id}', "

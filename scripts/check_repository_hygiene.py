@@ -23,7 +23,6 @@ FORBIDDEN_SUFFIXES = {".tfplan", ".tfstate", ".pyc", ".duckdb", ".parquet"}
 AWS_ACCESS_KEY = re.compile(rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 REQUIRED_TRACKABLE = (
     "scripts/package_spark_jobs.py",
-    "scripts/bootstrap_airflow_runner.sh",
     "scripts/check_repository_hygiene.py",
 )
 
@@ -41,9 +40,10 @@ def _git_paths(*args: str) -> tuple[Path, ...]:
 
 
 def violations() -> list[str]:
-    tracked = _git_paths("ls-files", "-z")
+    tracked = set(_git_paths("ls-files", "-z"))
+    untracked = set(_git_paths("ls-files", "-z", "--others", "--exclude-standard"))
     problems: list[str] = []
-    for relative in tracked:
+    for relative in sorted(tracked | untracked):
         path = ROOT / relative
         # A deleted tracked file is a pending cleanup in a developer worktree;
         # it will be absent from `git ls-files` after the change is committed.

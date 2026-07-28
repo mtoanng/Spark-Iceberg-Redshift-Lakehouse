@@ -1,4 +1,4 @@
-"""Verify the exact dbt graph that Cosmos Watcher renders."""
+"""Verify the exact dbt graph produced by the single Gold build."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ EXPECTED_DEPENDENCIES = {
     "mart_hourly_zone_demand": {"fct_trips"},
     "mart_operator_metrics": {"fct_trips"},
 }
-EXPECTED_TEST_COUNT = 36
+EXPECTED_TEST_COUNT = 37
 
 
 def verify(manifest_path: Path) -> None:
@@ -60,7 +60,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     verify(args.manifest)
-    print("PASS dbt manifest: 6 models, 36 tests, dependency graph unchanged")
+    print("PASS dbt manifest: 6 models, 37 tests, dependency graph unchanged")
 
 
 if __name__ == "__main__":

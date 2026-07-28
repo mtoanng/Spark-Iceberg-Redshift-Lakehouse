@@ -14,7 +14,6 @@ class MonthlyRunRequest:
 
     year: int
     month: int
-    force: bool = False
 
     def __post_init__(self) -> None:
         if not 2019 <= self.year <= 2099:
@@ -32,7 +31,7 @@ class RunAudit:
     source_month: int
     source_uri: str
     source_checksum: str
-    force: bool
+    source_size_bytes: int
     requested_at: datetime
 
 
@@ -52,24 +51,22 @@ def audit_for_source(
         source_month=source.source_month,
         source_uri=source.source_uri,
         source_checksum=source.source_checksum,
-        force=request.force,
+        source_size_bytes=source.source_size_bytes,
         requested_at=requested_at or datetime.now(timezone.utc),
     )
 
 
 def sequential_backfill_requests(
-    year: int, first_month: int, *, force: bool = False
+    year: int, first_month: int
 ) -> tuple[MonthlyRunRequest, ...]:
     """Return exactly four ordered manual runs without crossing a year boundary."""
 
-    first = MonthlyRunRequest(year=year, month=first_month, force=force)
+    first = MonthlyRunRequest(year=year, month=first_month)
     if first.month > 9:
         raise SourceContractError(
             "A four-month backfill must start no later than September."
         )
     return tuple(
-        MonthlyRunRequest(
-            year=first.year, month=first.month + offset, force=first.force
-        )
+        MonthlyRunRequest(year=first.year, month=first.month + offset)
         for offset in range(4)
     )

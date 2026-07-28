@@ -10,8 +10,8 @@ variable "environment" {
   default     = "dev"
 
   validation {
-    condition     = can(regex("^[a-z0-9-]+$", var.environment))
-    error_message = "environment must contain lowercase letters, digits, and hyphens only."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,15}$", var.environment))
+    error_message = "environment must be 1-16 lowercase letters, digits, or hyphens."
   }
 }
 
@@ -19,6 +19,11 @@ variable "project_name" {
   type        = string
   description = "Resource prefix for the NYC HVFHV lakehouse."
   default     = "nyc-hvfhs-lakehouse"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{2,39}$", var.project_name))
+    error_message = "project_name must be a short lowercase resource prefix."
+  }
 }
 
 variable "s3_bucket_name" {
@@ -95,26 +100,54 @@ variable "emr_serverless_idle_timeout_minutes" {
   }
 }
 
-variable "airflow_runner_ami_id" {
+variable "vpc_id" {
   type        = string
-  description = "Optional approved Linux AMI ID; empty keeps the temporary runner disabled."
-  default     = ""
+  description = "VPC containing regular MWAA and Redshift Serverless."
+
+  validation {
+    condition     = can(regex("^vpc-[0-9a-f]+$", var.vpc_id))
+    error_message = "vpc_id must be an AWS VPC identifier."
+  }
 }
 
-variable "airflow_runner_subnet_id" {
-  type        = string
-  description = "Subnet for the optional temporary Airflow runner."
-  default     = ""
+variable "private_subnet_ids" {
+  type        = list(string)
+  description = "Exactly two private subnets in distinct Availability Zones with required AWS/PyPI egress."
+
+  validation {
+    condition = (
+      length(var.private_subnet_ids) == 2 &&
+      length(distinct(var.private_subnet_ids)) == 2 &&
+      alltrue([for id in var.private_subnet_ids : can(regex("^subnet-[0-9a-f]+$", id))])
+    )
+    error_message = "private_subnet_ids must contain two distinct AWS subnet identifiers."
+  }
 }
 
-variable "airflow_runner_instance_type" {
+variable "mwaa_environment_class" {
   type        = string
-  description = "Instance type for the optional temporary Airflow runner."
-  default     = "t3.medium"
+  description = "Cost-bounded regular MWAA environment class."
+  default     = "mw1.small"
 }
 
-variable "airflow_runner_key_name" {
+variable "mwaa_max_workers" {
+  type        = number
+  description = "Maximum regular MWAA workers for the bounded pipeline."
+  default     = 2
+
+  validation {
+    condition     = var.mwaa_max_workers >= 1 && var.mwaa_max_workers <= 5
+    error_message = "mwaa_max_workers must be between 1 and 5."
+  }
+}
+
+variable "mwaa_dag_s3_prefix" {
   type        = string
-  description = "Optional pre-existing EC2 key name; leave empty for SSM-only access."
-  default     = ""
+  description = "S3 prefix synchronized by regular MWAA as its DAG folder."
+  default     = "airflow"
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9!_.*'()=-]+(/[a-zA-Z0-9!_.*'()=-]+)*$", var.mwaa_dag_s3_prefix))
+    error_message = "mwaa_dag_s3_prefix must be a safe, relative S3 prefix."
+  }
 }

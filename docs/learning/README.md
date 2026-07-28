@@ -1,38 +1,27 @@
-# NYC HVFHV lakehouse learning guide
+# Learning task
 
-This guide is organized in three layers.
+Trace one fixture row through the same contracts as the cloud pipeline:
 
-1. General architecture: immutable source identity flows through S3 landing,
-   two EMR Serverless PySpark jobs, Redshift external schemas, Cosmos/dbt-redshift,
-   reconciliation, publication, and verification.
-2. Component layer: [COMPONENT_MAP.md](COMPONENT_MAP.md) describes ownership and
-   data/control handoffs.
-3. Code-module layer: [CODE_MODULE_REFERENCE.md](CODE_MODULE_REFERENCE.md)
-   maps the active entrypoints and adapters.
+1. calculate its policy-versioned `row_id` and `business_trip_key`;
+2. identify the first applicable Silver reason code;
+3. explain which layer owns that decision;
+4. reconcile the five fixture rows into one Silver and four quarantine rows;
+5. map the surviving row to `fct_trips` and both marts;
+6. draft the source/count/snapshot fields that publication must contain.
 
-Quality ownership is intentionally narrow: Bronze validates source existence,
-checksum, size, schema, and non-empty input; Silver validates rows, assigns
-deterministic quarantine reasons, and exact-deduplicates by `row_id`; dbt tests
-Gold; reconciliation validates `Bronze = Silver + quarantine` and
-`Silver = Gold fct_trips`.
+Run:
 
-The final monthly chain is:
-
-```text
-prepare_month
--> bronze_ingestion_emr
--> silver_transform_emr
--> Cosmos dbt_build -> dbt_result_artifact
--> reconciliation -> publication_manifest -> verification
+```powershell
+venv\Scripts\python.exe -m pytest `
+  tests/unit/test_nyc_identity_contract.py `
+  tests/unit/test_nyc_hvfhs_transform.py `
+  tests/unit/test_publication_and_rerun.py -v
 ```
 
-Athena reads only open Iceberg layers. Redshift Data API reads only Redshift
-Gold. The publication JSON contains immutable source identity, open-layer
-identifiers and available snapshots, Redshift relation names, counts,
-reconciliation evidence, and archived dbt artifact evidence. Gold relation
-metadata is database/schema/name only.
+Teach-back:
 
-Read [DEPLOYMENT_WALKTHROUGH.md](DEPLOYMENT_WALKTHROUGH.md) after these layers
-for the execution path, then use [INTERVIEW_GUIDE.md](INTERVIEW_GUIDE.md) to
-teach it back. Live AWS behavior remains **NOT VERIFIED** until a retained,
-bounded execution exists.
+1. Why can `business_trip_key` support analysis but not exact deduplication?
+2. Why does publication consume snapshot IDs from reconciliation instead of
+   asking Iceberg for the latest snapshot again?
+3. On an identical completed rerun, which artifacts must remain stable and
+   which attempt metadata may change?

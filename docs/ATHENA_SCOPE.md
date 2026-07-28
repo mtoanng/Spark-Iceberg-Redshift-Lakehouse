@@ -1,11 +1,20 @@
-# Athena scope
+# Athena boundary
 
-Athena is a bounded, read-only verifier for the open Iceberg layers only:
-`bronze.bronze_hvfhs_trips`, `silver.silver_trips`, and
-`silver.quarantine_trips`. Every runtime query is scoped to the requested
-source year and month.
+Athena is an independent, read-only verifier for the open Iceberg layers. It
+does not transform data and does not query managed Redshift Gold.
 
-Gold is Redshift-managed. The Redshift Data API, not Athena, verifies the six
-Gold relations, `fct_trips` for the requested month, both marts, and the Gold
-count from reconciliation. Glue Data Catalog remains metadata for the open
-Iceberg layers and the operational manifest; it is not a Gold serving catalog.
+Allowed runtime queries:
+
+- month-scoped Bronze count;
+- month-scoped Silver count;
+- month-scoped quarantine count;
+- one operational-manifest row for the requested stable run;
+- post-publication Silver count;
+- the explicit 2024 snapshot version-travel query after 2025 evolution.
+
+The Terraform workgroup enforces its result location and per-query bytes
+cutoff. IAM limits catalog access to `bronze`, `silver`, and `ops`, and S3
+access to their warehouse prefixes plus Athena results.
+
+Redshift Data API owns Gold reconciliation and verification. This separation
+makes the cross-engine gate explicit.

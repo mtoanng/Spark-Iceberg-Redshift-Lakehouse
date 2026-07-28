@@ -74,9 +74,10 @@ def test_manifest_table_persists_source_identity_status_and_reconciliation_count
         "bronze_snapshot_id",
         "silver_snapshot_id",
         "quarantine_snapshot_id",
-        "publication_manifest_uri",
     ):
         assert column in columns
+    assert "publication_manifest_uri" not in columns
+    assert "publication_status" not in columns
     assert spec.partitioned_by == ("source_year", "source_month")
 
 

@@ -27,6 +27,7 @@ class ReconciliationResult:
     gold_row_count: int
     bronze_equals_classified: bool
     silver_equals_gold: bool
+    iceberg_snapshot_ids: dict[str, str]
     athena_query_execution_ids: dict[str, str]
     redshift_statement_id: str
     reconciled_at: str
@@ -109,6 +110,50 @@ def _redshift_count(
         sleep(poll_interval_seconds)
 
 
+def _manifest_snapshots(
+    runner: AthenaQueryRunner,
+    *,
+    database: str,
+    workgroup: str,
+    year: int,
+    month: int,
+    ingestion_run_id: str,
+    expected_counts: tuple[int, int, int],
+) -> tuple[dict[str, str], str]:
+    result = runner.run(
+        "SELECT run_status, bronze_row_count, silver_row_count, "
+        "quarantine_row_count, bronze_snapshot_id, silver_snapshot_id, "
+        "quarantine_snapshot_id "
+        'FROM "source_run_manifest" '
+        "WHERE source_year = ? AND source_month = ? AND ingestion_run_id = ?",
+        database=database,
+        workgroup=workgroup,
+        execution_parameters=(str(year), str(month), ingestion_run_id),
+        client_request_token=f"nyc-reconcile-manifest-{year}-{month:02d}",
+    )
+    if len(result.rows) != 1 or len(result.rows[0]) != 7:
+        raise ReconciliationError("Operational manifest snapshot evidence is missing.")
+    row = result.rows[0]
+    if row[0] != "silver_published":
+        raise ReconciliationError("Operational manifest is not Silver-published.")
+    manifest_counts = tuple(int(value or 0) for value in row[1:4])
+    if manifest_counts != expected_counts:
+        raise ReconciliationError(
+            "Operational manifest counts differ from consumer-visible counts."
+        )
+    names = ("bronze", "silver", "quarantine")
+    snapshots = {
+        name: str(value)
+        for name, value in zip(names, row[4:], strict=True)
+        if value is not None and str(value)
+    }
+    if set(snapshots) != set(names):
+        raise ReconciliationError(
+            "Operational manifest snapshot evidence is incomplete."
+        )
+    return snapshots, result.query_execution_id
+
+
 def reconcile_month(
     *,
     source_year: int,
@@ -120,6 +165,7 @@ def reconcile_month(
     redshift_schema: str = "gold",
     bronze_database: str = "bronze",
     silver_database: str = "silver",
+    ops_database: str = "ops",
     athena_runner: AthenaQueryRunner | None = None,
     redshift_client: Any | None = None,
     now: datetime | None = None,
@@ -174,6 +220,15 @@ def reconcile_month(
         year=year,
         month=month,
     )
+    snapshot_ids, manifest_query_id = _manifest_snapshots(
+        runner,
+        database=ops_database,
+        workgroup=athena_workgroup,
+        year=year,
+        month=month,
+        ingestion_run_id=ingestion_run_id,
+        expected_counts=(bronze, silver, quarantine),
+    )
     outcome = ReconciliationResult(
         source_year=year,
         source_month=month,
@@ -184,10 +239,12 @@ def reconcile_month(
         gold_row_count=gold,
         bronze_equals_classified=bronze == silver + quarantine,
         silver_equals_gold=silver == gold,
+        iceberg_snapshot_ids=snapshot_ids,
         athena_query_execution_ids={
             "bronze": bronze_query_id,
             "silver": silver_query_id,
             "quarantine": quarantine_query_id,
+            "manifest": manifest_query_id,
         },
         redshift_statement_id=statement_id,
         reconciled_at=(now or datetime.now(timezone.utc)).isoformat(),

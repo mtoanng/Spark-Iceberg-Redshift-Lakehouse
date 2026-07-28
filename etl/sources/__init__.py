@@ -1,13 +1,10 @@
 """Source contracts for the NYC HVFHV lakehouse."""
 
 from .nyc_hvfhs import (
-    ManifestAction,
-    SourceManifestEntry,
-    SourceStatus,
+    SourceFile,
     canonical_business_trip_key,
     canonical_row_id,
     inspect_local_source,
-    manifest_decision,
     monthly_trip_uri,
     required_trip_columns,
     stable_run_id,
@@ -16,13 +13,10 @@ from .nyc_hvfhs import (
 )
 
 __all__ = [
-    "ManifestAction",
-    "SourceManifestEntry",
-    "SourceStatus",
+    "SourceFile",
     "canonical_business_trip_key",
     "canonical_row_id",
     "inspect_local_source",
-    "manifest_decision",
     "monthly_trip_uri",
     "required_trip_columns",
     "stable_run_id",

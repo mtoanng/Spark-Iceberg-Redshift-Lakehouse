@@ -8,7 +8,6 @@ from etl.publication.nyc_hvfhs import (
     build_publication_document,
     canonical_json,
 )
-from scripts.reconcile_outputs import reconcile
 from scripts.verify_monthly_rerun import compare_monthly_evidence
 from scripts.verify_schema_evolution import verify
 
@@ -108,19 +107,7 @@ def test_monthly_retry_clear_and_rerun_compare_canonical_evidence() -> None:
         compare_monthly_evidence(evidence, {**evidence, "gold_row_count": 2})
 
 
-def test_independent_reconciliation_and_schema_evolution_evidence() -> None:
-    reconcile(
-        {
-            "source_row_count": 5,
-            "bronze_row_count": 5,
-            "silver_row_count": 1,
-            "quarantine_row_count": 4,
-            "quarantine_by_reason": {"DUPLICATE_ROW_ID": 4},
-            "gold_row_count": 1,
-            "publication_gold_row_count": 1,
-            "athena_open_layer_row_count": 5,
-        }
-    )
+def test_schema_evolution_evidence_contract() -> None:
     verify(
         {
             "snapshot_2024": "101",

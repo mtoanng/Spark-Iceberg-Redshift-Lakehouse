@@ -16,7 +16,6 @@ def _active_text() -> str:
         ROOT / ".github",
         ROOT / "requirements-airflow.txt",
         ROOT / "requirements-ci.txt",
-        ROOT / "requirements.txt",
     ]
     return "\n".join(
         path.read_text(encoding="utf-8")
@@ -39,6 +38,8 @@ def test_great_expectations_and_glue_etl_are_absent_from_active_runtime() -> Non
     assert "gluejoboperator" not in text
     assert "interactive session" not in text
     assert "dbt" + "-glue" not in text
+    assert "cosmos" not in text
+    assert "aws_instance.airflow_runner" not in text
 
 
 def test_only_bronze_and_silver_are_monthly_emr_processing_jobs() -> None:

@@ -54,6 +54,8 @@ def build_publication_document(
     for name, layer in iceberg_layers.items():
         if not layer.get("table_identifier"):
             raise ValueError(f"Publication requires a {name} table identifier.")
+        if not layer.get("snapshot_id"):
+            raise ValueError(f"Publication requires a {name} snapshot ID.")
         if int(layer.get("row_count", -1)) < 0:
             raise ValueError(f"Publication requires a non-negative {name} row count.")
     if not redshift_database or not redshift_schema:
@@ -101,8 +103,16 @@ def canonical_json(document: Mapping[str, object]) -> bytes:
 
 
 def logical_document(document: Mapping[str, object]) -> dict[str, object]:
-    """Remove attempt time so a deterministic key can reject only real conflicts."""
+    """Remove attempt metadata so identical source reruns reuse one release."""
 
     result = dict(document)
     result.pop("publication_timestamp", None)
+    reconciliation = dict(result.get("reconciliation", {}))
+    for field in (
+        "athena_query_execution_ids",
+        "redshift_statement_id",
+        "reconciled_at",
+    ):
+        reconciliation.pop(field, None)
+    result["reconciliation"] = reconciliation
     return result

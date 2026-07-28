@@ -35,7 +35,7 @@ resource "aws_iam_role_policy" "emr_serverless_lakehouse" {
         ]
       },
       {
-        Sid    = "ManageCanonicalTablesAndRunArtifacts"
+        Sid    = "ManageCanonicalTablesAndLogs"
         Effect = "Allow"
         Action = [
           "s3:AbortMultipartUpload",
@@ -47,7 +47,6 @@ resource "aws_iam_role_policy" "emr_serverless_lakehouse" {
         Resource = [
           "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/*",
           "${aws_s3_bucket.lakehouse.arn}/tmp/*",
-          "${aws_s3_bucket.lakehouse.arn}/manifests/*",
           "${aws_s3_bucket.lakehouse.arn}/emr-serverless-logs/*"
         ]
       },
@@ -72,100 +71,97 @@ resource "aws_iam_role_policy" "emr_serverless_lakehouse" {
   })
 }
 
-resource "aws_iam_role_policy" "athena_iceberg_verify" {
-  name = "${var.project_name}-${var.environment}-athena-iceberg-verify"
-  role = aws_iam_role.airflow_runner.id
+resource "aws_iam_role" "mwaa_execution" {
+  name = "${var.project_name}-${var.environment}-mwaa"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = ["airflow.amazonaws.com", "airflow-env.amazonaws.com"]
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "mwaa_platform" {
+  name = "${var.project_name}-${var.environment}-mwaa-platform"
+  role = aws_iam_role.mwaa_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AthenaOneWorkgroup"
-        Effect = "Allow"
-        Action = [
-          "athena:StartQueryExecution",
-          "athena:GetQueryExecution",
-          "athena:GetQueryResults",
-          "athena:StopQueryExecution",
-          "athena:GetWorkGroup"
-        ]
-        Resource = aws_athena_workgroup.iceberg_verify.arn
-      },
-      {
-        Sid    = "ReadIcebergGlueMetadata"
-        Effect = "Allow"
-        Action = [
-          "glue:GetDatabase",
-          "glue:GetDatabases",
-          "glue:GetTable",
-          "glue:GetTables",
-          "glue:GetPartitions"
-        ]
-        Resource = [
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/bronze",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/silver",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/bronze/*",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/silver/*"
-        ]
-      },
-      {
-        Sid      = "ListIcebergAndResultsPrefixes"
+        Sid      = "PublishAirflowMetrics"
         Effect   = "Allow"
-        Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
+        Action   = ["airflow:PublishMetrics"]
+        Resource = "arn:aws:airflow:${var.aws_region}:${data.aws_caller_identity.current.account_id}:environment/${var.project_name}-${var.environment}"
+      },
+      {
+        Sid      = "ReadMwaaSourceBucket"
+        Effect   = "Allow"
+        Action   = ["s3:GetBucketLocation", "s3:GetBucketPublicAccessBlock", "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration", "s3:ListBucket"]
         Resource = aws_s3_bucket.lakehouse.arn
+      },
+      {
+        Sid      = "ReadMwaaDagAndRequirements"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:GetObjectVersion"]
+        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.mwaa_dag_s3_prefix}/*"
+      },
+      {
+        Sid      = "ReadAccountPublicAccessBlock"
+        Effect   = "Allow"
+        Action   = ["s3:GetAccountPublicAccessBlock"]
+        Resource = "*"
+      },
+      {
+        Sid    = "MwaaCloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:DescribeLogGroups",
+          "logs:GetLogGroupFields",
+          "logs:GetLogEvents",
+          "logs:GetLogRecord",
+          "logs:GetQueryResults",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:airflow-${var.project_name}-${var.environment}-*"
+      },
+      {
+        Sid      = "MwaaCloudWatchMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+      },
+      {
+        Sid      = "MwaaCeleryQueue"
+        Effect   = "Allow"
+        Action   = ["sqs:ChangeMessageVisibility", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ReceiveMessage", "sqs:SendMessage"]
+        Resource = "arn:aws:sqs:${var.aws_region}:*:airflow-celery-*"
+      },
+      {
+        Sid      = "MwaaManagedKeyForCelery"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey", "kms:GenerateDataKey*"]
+        Resource = "*"
         Condition = {
           StringLike = {
-            "s3:prefix" = ["${var.warehouse_prefix}/bronze/*", "${var.warehouse_prefix}/silver/*", "${var.athena_results_prefix}/*"]
+            "kms:ViaService" = "sqs.${var.aws_region}.amazonaws.com"
           }
         }
-      },
-      {
-        Sid    = "ReadOpenIcebergObjects"
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
-        Resource = [
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/bronze/*",
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*"
-        ]
-      },
-      {
-        Sid      = "ReadWriteAthenaResultsOnly"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.athena_results_prefix}/*"
       }
     ]
   })
 }
 
-resource "aws_iam_role" "airflow_runner" {
-  name = "${var.project_name}-${var.environment}-airflow-runner"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_instance_profile" "airflow_runner" {
-  count = var.airflow_runner_ami_id == "" ? 0 : 1
-  name  = "${var.project_name}-${var.environment}-airflow-profile"
-  role  = aws_iam_role.airflow_runner.name
-}
-
-resource "aws_iam_role_policy_attachment" "airflow_ssm" {
-  role       = aws_iam_role.airflow_runner.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_role_policy" "airflow_runner_access" {
-  name = "${var.project_name}-${var.environment}-airflow-runner-access"
-  role = aws_iam_role.airflow_runner.id
+resource "aws_iam_role_policy" "mwaa_pipeline" {
+  name = "${var.project_name}-${var.environment}-mwaa-pipeline"
+  role = aws_iam_role.mwaa_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -201,6 +197,21 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         }
       },
       {
+        Sid      = "ListPipelinePrefixes"
+        Effect   = "Allow"
+        Action   = ["s3:GetBucketLocation", "s3:ListBucket"]
+        Resource = aws_s3_bucket.lakehouse.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "${var.landing_prefix}/*",
+              "${var.reference_prefix}/*",
+              "manifests/*"
+            ]
+          }
+        }
+      },
+      {
         Sid    = "ReadLandingAndReference"
         Effect = "Allow"
         Action = ["s3:GetObject"]
@@ -210,17 +221,87 @@ resource "aws_iam_role_policy" "airflow_runner_access" {
         ]
       },
       {
-        Sid       = "ListLandingAndReference"
-        Effect    = "Allow"
-        Action    = ["s3:GetBucketLocation", "s3:ListBucket"]
-        Resource  = aws_s3_bucket.lakehouse.arn
-        Condition = { StringLike = { "s3:prefix" = ["${var.landing_prefix}/*", "${var.reference_prefix}/*"] } }
+        Sid      = "PublishAndVerifyRunEvidence"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = "${aws_s3_bucket.lakehouse.arn}/manifests/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "athena_iceberg_verify" {
+  name = "${var.project_name}-${var.environment}-athena-iceberg-verify"
+  role = aws_iam_role.mwaa_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AthenaOneWorkgroup"
+        Effect = "Allow"
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:StopQueryExecution",
+          "athena:GetWorkGroup"
+        ]
+        Resource = aws_athena_workgroup.iceberg_verify.arn
       },
       {
-        Sid      = "PublishRunManifests"
+        Sid    = "ReadIcebergGlueMetadata"
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:GetTableVersion",
+          "glue:GetTableVersions",
+          "glue:GetPartitions"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/bronze",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/silver",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/ops",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/bronze/*",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/silver/*",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/ops/*"
+        ]
+      },
+      {
+        Sid      = "ListIcebergAndResultsPrefixes"
         Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:GetObject"]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/manifests/*"
+        Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
+        Resource = aws_s3_bucket.lakehouse.arn
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "${var.warehouse_prefix}/bronze/*",
+              "${var.warehouse_prefix}/silver/*",
+              "${var.warehouse_prefix}/ops/*",
+              "${var.athena_results_prefix}/*"
+            ]
+          }
+        }
+      },
+      {
+        Sid    = "ReadOpenIcebergObjects"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/bronze/*",
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*",
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/ops/*"
+        ]
+      },
+      {
+        Sid      = "ReadWriteAthenaResultsOnly"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
+        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.athena_results_prefix}/*"
       }
     ]
   })

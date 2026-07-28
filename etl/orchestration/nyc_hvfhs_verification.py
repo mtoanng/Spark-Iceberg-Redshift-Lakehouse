@@ -1,19 +1,21 @@
-"""Final read-only verification of open Iceberg layers and Redshift Gold."""
+"""Minimal read-after-publish verification for open Silver and Gold."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
+import json
 import time
-from typing import Any
+from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import boto3
 
 from athena.query_runner import AthenaQueryRunner
-from etl.publication.nyc_hvfhs import REQUIRED_GOLD_RELATIONS
 
 
 class VerificationError(RuntimeError):
-    """Raised when post-publication read verification fails."""
+    """Raised when published evidence or consumer reads disagree."""
 
 
 @dataclass(frozen=True)
@@ -21,77 +23,95 @@ class VerificationResult:
     source_year: int
     source_month: int
     ingestion_run_id: str
-    athena_query_execution_ids: dict[str, str]
-    redshift_statement_ids: dict[str, str]
+    publication_uri: str
+    athena_query_execution_id: str
+    redshift_statement_id: str
+    silver_row_count: int
     gold_row_count: int
 
 
-def _athena_partition_count(
+def _publication_document(
+    publication: Mapping[str, object], s3_client: Any
+) -> tuple[str, dict[str, object]]:
+    uri = str(publication.get("publication_uri", ""))
+    checksum = str(publication.get("sha256", ""))
+    parsed = urlparse(uri)
+    key = parsed.path.lstrip("/")
+    if parsed.scheme != "s3" or not parsed.netloc or not key or len(checksum) != 64:
+        raise VerificationError("Publication reference is incomplete.")
+    payload = s3_client.get_object(Bucket=parsed.netloc, Key=key)["Body"].read()
+    if hashlib.sha256(payload).hexdigest() != checksum:
+        raise VerificationError("Publication object SHA-256 does not match.")
+    document = json.loads(payload)
+    if document.get("status") != "published":
+        raise VerificationError("Publication object is not marked published.")
+    return uri, document
+
+
+def _silver_count(
     runner: AthenaQueryRunner,
     *,
-    database: str,
-    table: str,
-    year_column: str,
-    month_column: str,
     workgroup: str,
     year: int,
     month: int,
 ) -> tuple[int, str]:
     result = runner.run(
-        f'SELECT count(*) FROM "{table}" WHERE {year_column} = ? AND {month_column} = ?',
-        database=database,
+        'SELECT count(*) FROM "silver_trips" '
+        "WHERE source_year = ? AND source_month = ?",
+        database="silver",
         workgroup=workgroup,
         execution_parameters=(str(year), str(month)),
-        client_request_token=f"nyc-verify-{database}-{table}-{year}-{month:02d}",
+        client_request_token=f"nyc-verify-silver-{year}-{month:02d}",
     )
     if len(result.rows) != 1 or len(result.rows[0]) != 1:
-        raise VerificationError(
-            "Athena layer verification returned an unexpected result."
-        )
+        raise VerificationError("Athena Silver verification returned no scalar.")
     return int(result.rows[0][0] or 0), result.query_execution_id
 
 
-def _value(cell: dict[str, Any]) -> str:
-    for key in ("stringValue", "longValue", "doubleValue"):
-        if key in cell:
-            return str(cell[key])
-    raise VerificationError("Redshift Data API returned an empty cell.")
-
-
-def _statement(
+def _gold_count(
     client: Any,
     *,
     database: str,
     workgroup_name: str,
-    sql: str,
-    name: str,
+    schema: str,
+    year: int,
+    month: int,
     timeout_seconds: float = 60.0,
     poll_interval_seconds: float = 1.0,
     sleep=time.sleep,
-) -> tuple[list[list[str]], str]:
+) -> tuple[int, str]:
     statement_id = client.execute_statement(
         WorkgroupName=workgroup_name,
         Database=database,
-        Sql=sql,
-        StatementName=name,
+        Sql=(
+            f'SELECT count(*) FROM "{schema}"."fct_trips" '
+            f"WHERE source_year = {year} AND source_month = {month}"
+        ),
+        StatementName=f"nyc-verify-gold-{year}-{month:02d}",
     )["Id"]
     deadline = time.monotonic() + timeout_seconds
     while True:
         details = client.describe_statement(Id=statement_id)
         if details["Status"] == "FINISHED":
             records = client.get_statement_result(Id=statement_id).get("Records", [])
-            return [
-                [_value(cell) for cell in record] for record in records
-            ], statement_id
+            if len(records) != 1 or len(records[0]) != 1:
+                raise VerificationError(
+                    "Redshift Gold verification returned no scalar."
+                )
+            cell = records[0][0]
+            for key in ("longValue", "doubleValue", "stringValue"):
+                if key in cell:
+                    return int(cell[key]), statement_id
+            raise VerificationError(
+                "Redshift Gold verification returned an empty cell."
+            )
         if details["Status"] in {"FAILED", "ABORTED"}:
             raise VerificationError(
-                f"Redshift verification statement {statement_id} {details['Status']}: "
+                f"Redshift verification {statement_id} {details['Status']}: "
                 f"{details.get('Error', 'no error supplied')}"
             )
         if time.monotonic() >= deadline:
-            raise VerificationError(
-                f"Redshift verification statement {statement_id} timed out."
-            )
+            raise VerificationError(f"Redshift verification {statement_id} timed out.")
         sleep(poll_interval_seconds)
 
 
@@ -100,106 +120,59 @@ def verify_month(
     source_year: int,
     source_month: int,
     ingestion_run_id: str,
-    reconciliation: dict[str, object],
+    publication: Mapping[str, object],
     athena_workgroup: str,
     redshift_database: str,
     redshift_workgroup_name: str,
     redshift_schema: str = "gold",
     athena_runner: AthenaQueryRunner | None = None,
     redshift_client: Any | None = None,
+    s3_client: Any | None = None,
 ) -> dict[str, object]:
-    """Verify only Bronze/Silver/quarantine through Athena and Gold through Redshift."""
-
     year, month = int(source_year), int(source_month)
-    runner = athena_runner or AthenaQueryRunner()
-    bronze, bronze_id = _athena_partition_count(
-        runner,
-        database="bronze",
-        table="bronze_hvfhs_trips",
-        year_column="_source_year",
-        month_column="_source_month",
+    uri, document = _publication_document(publication, s3_client or boto3.client("s3"))
+    source = document.get("source", {})
+    counts = document.get("row_counts", {})
+    if (
+        not isinstance(source, dict)
+        or not isinstance(counts, dict)
+        or int(source.get("source_year", -1)) != year
+        or int(source.get("source_month", -1)) != month
+        or str(document.get("ingestion_run_id", "")) != ingestion_run_id
+    ):
+        raise VerificationError("Publication identity differs from the requested run.")
+
+    silver, athena_id = _silver_count(
+        athena_runner or AthenaQueryRunner(),
         workgroup=athena_workgroup,
         year=year,
         month=month,
     )
-    silver, silver_id = _athena_partition_count(
-        runner,
-        database="silver",
-        table="silver_trips",
-        year_column="source_year",
-        month_column="source_month",
-        workgroup=athena_workgroup,
-        year=year,
-        month=month,
-    )
-    quarantine, quarantine_id = _athena_partition_count(
-        runner,
-        database="silver",
-        table="quarantine_trips",
-        year_column="_source_year",
-        month_column="_source_month",
-        workgroup=athena_workgroup,
-        year=year,
-        month=month,
-    )
-    expected = {
-        "bronze": int(reconciliation["bronze_row_count"]),
-        "silver": int(reconciliation["silver_row_count"]),
-        "quarantine": int(reconciliation["quarantine_row_count"]),
-    }
-    if {"bronze": bronze, "silver": silver, "quarantine": quarantine} != expected:
-        raise VerificationError("Athena open-layer counts differ from reconciliation.")
-    redshift = redshift_client or boto3.client("redshift-data")
-    listed, listed_id = _statement(
-        redshift,
+    gold, redshift_id = _gold_count(
+        redshift_client or boto3.client("redshift-data"),
         database=redshift_database,
         workgroup_name=redshift_workgroup_name,
-        name=f"nyc-verify-relations-{year}-{month:02d}",
-        sql=(
-            "SELECT table_name FROM information_schema.tables "
-            f"WHERE table_schema = '{redshift_schema}' AND table_name IN ("
-            + ", ".join(f"'{name}'" for name in REQUIRED_GOLD_RELATIONS)
-            + ")"
-        ),
+        schema=redshift_schema,
+        year=year,
+        month=month,
     )
-    if {row[0] for row in listed} != set(REQUIRED_GOLD_RELATIONS):
-        raise VerificationError("Redshift Gold relation set is incomplete.")
-    fact, fact_id = _statement(
-        redshift,
-        database=redshift_database,
-        workgroup_name=redshift_workgroup_name,
-        name=f"nyc-verify-fact-{year}-{month:02d}",
-        sql=(
-            f'SELECT count(*) FROM "{redshift_schema}"."fct_trips" '
-            f"WHERE source_year = {year} AND source_month = {month}"
-        ),
-    )
-    gold_count = int(fact[0][0]) if len(fact) == 1 and len(fact[0]) == 1 else -1
-    if gold_count != int(reconciliation["gold_row_count"]):
-        raise VerificationError("Redshift fct_trips count differs from reconciliation.")
-    statement_ids = {"relations": listed_id, "fct_trips": fact_id}
-    for mart in ("mart_hourly_zone_demand", "mart_operator_metrics"):
-        _, statement_ids[mart] = _statement(
-            redshift,
-            database=redshift_database,
-            workgroup_name=redshift_workgroup_name,
-            name=f"nyc-verify-{mart}-{year}-{month:02d}",
-            sql=(
-                f'SELECT count(*) FROM "{redshift_schema}"."{mart}" '
-                f"WHERE source_year = {year} AND source_month = {month}"
-            ),
+    if silver != int(counts.get("silver", -1)):
+        raise VerificationError(
+            "Published Silver count is not readable through Athena."
+        )
+    if gold != int(counts.get("gold_fct_trips", -1)) or gold != silver:
+        raise VerificationError(
+            "Published Gold count is not readable through Redshift."
         )
     return asdict(
         VerificationResult(
             source_year=year,
             source_month=month,
             ingestion_run_id=ingestion_run_id,
-            athena_query_execution_ids={
-                "bronze": bronze_id,
-                "silver": silver_id,
-                "quarantine": quarantine_id,
-            },
-            redshift_statement_ids=statement_ids,
-            gold_row_count=gold_count,
+            publication_uri=uri,
+            athena_query_execution_id=athena_id,
+            redshift_statement_id=redshift_id,
+            silver_row_count=silver,
+            gold_row_count=gold,
         )
     )

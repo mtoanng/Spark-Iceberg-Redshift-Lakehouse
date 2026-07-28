@@ -7,8 +7,6 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from scripts.package_spark_jobs import build
-from scripts.run_e2e import command_plan
-
 
 ROOT = Path(__file__).parents[2]
 
@@ -29,13 +27,15 @@ def test_spark_package_is_deterministic_and_contains_runtime_contract(
         assert manifest["namespaces"] == ["bronze", "silver", "ops"]
 
 
-def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
+def test_terraform_is_nyc_only_and_uses_mwaa_and_package_contract() -> None:
     terraform = "\n".join(
         path.read_text(encoding="utf-8") for path in (ROOT / "terraform").glob("*.tf")
     )
     assert "instacart" not in terraform.lower()
-    assert "aws_iam_instance_profile" in terraform
-    assert 'http_tokens                 = "required"' in terraform
+    assert 'resource "aws_mwaa_environment"' in terraform
+    assert '"PRIVATE_ONLY"' in terraform
+    assert "aws_iam_instance_profile" not in terraform
+    assert 'resource "aws_instance"' not in terraform
     assert "aws_emrserverless_application" in terraform
     assert "--py-files" in terraform
     assert 'aws_glue_catalog_database" "namespace' in terraform
@@ -54,8 +54,7 @@ def test_terraform_is_nyc_only_and_uses_profile_and_package_contract() -> None:
     assert "nyc_publish_manifest.py" not in terraform
 
 
-def test_e2e_release_is_four_months_and_teardown_has_no_apply() -> None:
-    assert len(command_plan(2024, 1)) == 4
+def test_teardown_has_no_apply() -> None:
     teardown = (ROOT / "scripts" / "teardown.ps1").read_text(encoding="utf-8").lower()
     assert "'plan', '-destroy'" in teardown
     assert "terraform apply" not in teardown
@@ -70,6 +69,7 @@ def test_cloud_environment_has_no_static_key_contract() -> None:
     assert "AIRFLOW_VAR_REDSHIFT_WORKGROUP_NAME" in env
 
 
-def test_airflow_runtime_pins_cosmos_for_the_dbt_task_group() -> None:
+def test_airflow_runtime_uses_one_plain_dbt_build_without_cosmos() -> None:
     requirements = (ROOT / "requirements-airflow.txt").read_text(encoding="utf-8")
-    assert "astronomer-cosmos==1.15.0" in requirements
+    assert "dbt-redshift==1.10.2" in requirements
+    assert "cosmos" not in requirements.lower()

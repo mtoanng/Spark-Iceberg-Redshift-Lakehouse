@@ -15,13 +15,10 @@ test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
-packages-install-path: "target/dbt_packages_local"
-
 # Build artifacts
 target-path: "target"
 clean-targets:
   - "target"
-  - "dbt_packages"
   - "logs"
 
 models:

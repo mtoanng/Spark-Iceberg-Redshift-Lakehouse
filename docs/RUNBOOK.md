@@ -1,65 +1,148 @@
-# Controlled AWS runbook
+# Deployment and execution runbook
 
-## Prepare without AWS execution
+All AWS writes and costs require separate approval. The commands below are
+instructions; repository validation does not execute `terraform apply`.
 
-1. Configure only role-based credentials/instance profile.
-2. Pin official source URI, SHA-256, byte size, and Taxi Zone checksum.
-3. Build `build/nyc_spark_jobs.zip`.
-4. Run Python, dbt, DAG, Terraform, packaging, hygiene, and secret checks.
-5. Review `terraform plan`; do not apply without separate approval.
+## 1. Validate locally
 
-## One-month baseline
-
-After approved provisioning and official source upload, trigger:
-
-```bash
-airflow dags trigger nyc_hvfhs_monthly \
-  --conf '{"year":2024,"month":1,"force":false}'
+```powershell
+venv\Scripts\python.exe -m black --check athena etl scripts tests
+venv\Scripts\python.exe -m compileall -q athena etl scripts tests
+venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit tests/contract -q
+venv\Scripts\python.exe scripts/check_repository_hygiene.py
+venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 ```
 
-Retain manifest state, GE summary, Bronze/Silver/quarantine counts and
-snapshots, dbt results, all six Gold counts/snapshots, publication JSON, and
-Athena query metadata.
+For credential-independent dbt parsing:
 
-Configure Airflow Variable `nyc_publication_prefix_uri` from Terraform output
-`publication_prefix_uri`; the dbt task uploads `target/run_results.json` there
-and passes its URI to publication.
-
-## Retry, clear, and rerun experiment
-
-1. Run the month once.
-2. Interrupt the controlled Silver task.
-3. Let its configured task retry execute.
-4. If needed, clear only the failed task:
-
-```bash
-airflow tasks clear nyc_hvfhs_monthly silver_transform \
-  --start-date <logical-date> --end-date <logical-date> --yes
+```powershell
+$env:DBT_CI_REDSHIFT_HOST='127.0.0.1'
+$env:DBT_CI_REDSHIFT_USER='ci'
+$env:DBT_CI_REDSHIFT_PASSWORD='ci-not-used'
+$env:DBT_CI_REDSHIFT_DATABASE='lakehouse'
+venv\Scripts\dbt.exe parse --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci --no-partial-parse
+venv\Scripts\dbt.exe compile --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci --no-partial-parse --no-introspect --no-populate-cache
+venv\Scripts\python.exe scripts/verify_dbt_manifest.py
 ```
 
-5. Finish the run, then trigger the same month with `"force": true`.
-6. Export first/rerun evidence and compare:
+## 2. Prepare the deployment inputs
 
-```bash
-python scripts/verify_monthly_rerun.py first.json rerun.json
-python scripts/reconcile_outputs.py rerun.json
+Copy `terraform/terraform.tfvars.example` to ignored
+`terraform/terraform.tfvars`. Provide:
+
+- a globally unique private S3 bucket name;
+- one existing VPC;
+- exactly two private subnet IDs in different Availability Zones;
+- NAT/VPC endpoint routing needed by MWAA for AWS APIs and PyPI.
+
+The producer—not this repository—must already have landed:
+
+```text
+s3://<bucket>/landing/fhvhv_tripdata_2024-01.parquet
+s3://<bucket>/reference/taxi_zone_lookup.csv
 ```
 
-A different checksum must fail in Bronze manifest guarding.
+Both objects require lowercase SHA-256 in S3 metadata `sha256`.
 
-## 2025 evolution after baseline
+## 3. Plan infrastructure
 
-Run the existing initializer once with `--APPLY_2025_EVOLUTION true`, ingest
-one 2025 source, and retain old/current snapshots. Render the bounded Athena
-version-travel template using only validated identifiers and bind the old
-snapshot ID as parameter. Verify retained evidence:
-
-```bash
-python scripts/verify_schema_evolution.py schema-evolution.json
+```powershell
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+terraform -chdir=terraform plan -out=baseline.tfplan
 ```
 
-Expected: historical query returns the 2024 count; current query returns 2024
-plus 2025; old rows expose nullable congestion fee.
+Review the plan. Do not save or commit it. Apply only after explicit cost
+approval:
 
-Live AWS execution, snapshots, version travel, retry, and teardown are
-**NOT VERIFIED** until those artifacts exist.
+```powershell
+terraform -chdir=terraform apply baseline.tfplan
+```
+
+Terraform uploads the DAG/package/requirements, creates private regular MWAA,
+EMR Serverless, Glue namespaces, Athena, and Redshift Serverless, and
+bootstraps the Redshift IAM database user used by dbt.
+
+## 4. Configure regular MWAA
+
+Get the non-secret map:
+
+```powershell
+terraform -chdir=terraform output -json airflow_variables
+```
+
+Import those key/value pairs as Airflow Variables in the MWAA environment.
+There are no monthly checksum variables: the DAG reads object identity from
+S3. Confirm the DAG import has no error before running it.
+
+## 5. Prove one month
+
+Trigger `nyc_hvfhs_monthly` with:
+
+```json
+{"year": 2024, "month": 1}
+```
+
+Retain:
+
+- S3 URI, SHA-256, size, and stable run ID;
+- Airflow task states and EMR job IDs;
+- Bronze/Silver/quarantine counts and snapshot IDs;
+- quarantine counts by reason;
+- dbt `run_results.json`;
+- Redshift six-relation list;
+- Athena and Redshift reconciliation IDs;
+- publication URI/SHA-256;
+- bounded verification result.
+
+Pass criteria:
+
+```text
+Bronze > 0
+Bronze = Silver + quarantine
+Silver = Gold fct_trips
+dbt results are success/pass
+publication status = published
+verification Silver = published Silver
+verification Gold = published Gold
+```
+
+## 6. Prove retry/rerun
+
+After the baseline succeeds:
+
+1. clear a non-mutating downstream task and let it retry;
+2. trigger the same `{year, month}` again;
+3. confirm source/run identity, counts, row IDs, reason distribution, and
+   published snapshots remain stable;
+4. use `scripts/verify_monthly_rerun.py` on retained evidence.
+
+Then change only the producer object's identity in an isolated test
+environment and confirm Bronze rejects it before a write.
+
+## 7. Four-month sequence
+
+Only after the one-month proof, trigger
+`nyc_hvfhs_four_month_backfill` with the first year/month. It invokes exactly
+four monthly runs sequentially.
+
+## 8. Approved 2025 evolution
+
+Submit `apply_nyc_2025_schema_evolution.py` once, using the same Spark catalog
+configuration.
+Then run one 2025 month and retain old/new snapshot IDs plus Athena version
+travel evidence. Use `scripts/verify_schema_evolution.py` to validate the
+evidence document.
+
+## 9. Teardown
+
+Generate a review-only bounded destroy plan:
+
+```powershell
+.\scripts\teardown.ps1
+```
+
+It retains S3, Glue namespaces, and canonical Iceberg data. Applying that plan
+requires separate approval. After an approved apply, use the read-only
+`scripts/verify_teardown.py`. See [TEARDOWN_RUNBOOK.md](TEARDOWN_RUNBOOK.md).

@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from etl.sources.nyc_hvfhs import (
     CBD_CONGESTION_FEE_COLUMN,
-    ManifestAction,
     SourceContractError,
     SourceFile,
-    SourceManifestEntry,
-    inspect_local_source,
     canonical_row_id,
-    manifest_decision,
+    inspect_local_source,
     monthly_trip_uri,
     required_trip_columns,
     stable_run_id,
@@ -55,6 +51,8 @@ def test_landed_source_requires_exact_s3_month_checksum_and_size() -> None:
         validate_landed_source(
             SourceFile(2024, 1, valid.source_uri, "not-a-checksum", 123)
         )
+    with pytest.raises(SourceContractError, match="lowercase"):
+        validate_landed_source(SourceFile(2024, 1, valid.source_uri, "A" * 64, 123))
 
 
 def test_2024_fixture_is_source_shaped_and_contains_required_scenarios() -> None:
@@ -91,6 +89,15 @@ def test_local_source_identity_and_run_id_are_deterministic() -> None:
     assert source.source_checksum == same_source.source_checksum
     assert source.source_size_bytes > 0
     assert stable_run_id(source) == stable_run_id(same_source)
+    assert stable_run_id(source) != stable_run_id(
+        SourceFile(
+            source.source_year,
+            source.source_month,
+            "s3://another-bucket/landing/fhvhv_tripdata_2024-01.parquet",
+            source.source_checksum,
+            source.source_size_bytes,
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -125,37 +132,3 @@ def test_fixture_identity_is_pinned(
     source = inspect_local_source(FIXTURE_DIR / filename, year, month)
     assert source.source_size_bytes == expected_size
     assert source.source_checksum == expected_checksum
-
-
-def test_processed_identical_source_is_skipped_without_force() -> None:
-    source = inspect_local_source(
-        FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json", 2024, 1
-    )
-    entry = SourceManifestEntry.discovered(
-        source, datetime(2026, 1, 1, tzinfo=timezone.utc)
-    ).processed(stable_run_id(source), datetime(2026, 1, 2, tzinfo=timezone.utc))
-    assert (
-        manifest_decision(entry, source)
-        is ManifestAction.SKIP_IDENTICAL_PROCESSED_SOURCE
-    )
-    assert (
-        manifest_decision(entry, source, force=True)
-        is ManifestAction.PROCESS_FORCED_RETRY
-    )
-
-
-def test_changed_checksum_is_blocked_even_when_forced(tmp_path: Path) -> None:
-    fixture_path = FIXTURE_DIR / "fhvhv_tripdata_2024-01.fixture.json"
-    original = inspect_local_source(
-        fixture_path, 2024, 1, source_uri="fixture://2024-01"
-    )
-    entry = SourceManifestEntry.discovered(original).processed(stable_run_id(original))
-    changed_path = tmp_path / fixture_path.name
-    changed_path.write_bytes(fixture_path.read_bytes() + b"\nchanged")
-    changed = inspect_local_source(
-        changed_path, 2024, 1, source_uri="fixture://2024-01"
-    )
-    assert (
-        manifest_decision(entry, changed, force=True)
-        is ManifestAction.BLOCK_CHANGED_CHECKSUM
-    )

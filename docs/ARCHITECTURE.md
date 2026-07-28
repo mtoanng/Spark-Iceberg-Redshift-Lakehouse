@@ -1,43 +1,64 @@
 # Architecture
 
-```mermaid
-flowchart LR
-  TLC[Immutable TLC month] --> S3[S3 landing]
-  S3 --> AF[Airflow 3]
-  AF --> B[EMR Serverless Bronze Iceberg]
-  B --> S[EMR Serverless Silver]
-  S --> Q[Quarantine]
-  S --> X[Redshift external schemas]
-  X --> C[Cosmos DbtTaskGroup]
-  C --> G[Six dbt-redshift managed Gold models]
-  G --> R[Athena + Redshift reconciliation]
-  R --> P[Deterministic JSON publication]
-  P --> V[Open-layer + Gold verification]
+```text
+S3 landing (input contract)
+        |
+        v
+regular MWAA / Airflow 3
+        |
+        +--> EMR Serverless Bronze --------+
+        |                                  |
+        +--> EMR Serverless Silver/Q ------+--> S3 Iceberg
+                                               |
+                                          Glue Catalog
+                                           /         \
+                                      Athena       Spectrum
+                                                      |
+                                              Redshift Serverless
+                                                      |
+                                                 dbt managed Gold
+                                                      |
+                                      reconcile -> publish -> verify
 ```
 
-Airflow is the single orchestrator. The first runner remains disposable EC2
-with instance-profile authentication. One persistent EMR Serverless application
-runs Bronze and Silver only; Glue Data Catalog remains Iceberg metadata for the
-open layers. Cosmos owns dbt orchestration only: its
-Watcher-mode producer runs the full build and archives `run_results.json`; its
-model watchers expose progress. Redshift Spectrum exposes the Glue-catalogued
-Bronze and Silver Iceberg tables through external schemas, while dbt-redshift
-owns only the six Redshift-managed Gold relations.
+## Why the components are cohesive
 
-Bronze is source-faithful. GE is structural. Silver is the only row-level
-classification owner. Gold is one canonical fact graph. Publication is an
-atomic evidence boundary: resolve counts/locations/snapshots, write JSON, then
-mark the run published. Athena never becomes canonical.
+Storage, compute, metadata, orchestration, and serving are intentionally
+separate:
 
-Reconciliation counts Bronze, Silver, and quarantine through Athena and counts
-Redshift Gold through the Redshift Data API. Publication records only open-layer
-Iceberg snapshots; Gold is represented by its Redshift database, schema, and
-six relation names.
+- S3/Iceberg is the canonical open data plane.
+- Glue is the shared metadata boundary.
+- EMR Serverless performs Spark work and owns no persistent cluster.
+- Redshift Spectrum reads the same Silver tables without copying them first.
+- dbt creates the managed serving model inside Redshift.
+- MWAA controls stage ordering but contains no transformation logic.
+- Athena is a bounded, read-only independent path for open-layer evidence.
 
-Exact identity and probable business identity are deliberately separate.
-`row_id` changes for any canonical source-field change; `business_trip_key`
-stays stable for likely corrections and is not a deduplication key.
+## Network and authentication
 
-The sole advanced path adds nullable `cbd_congestion_fee` for 2025, creates new
-data snapshots, queries current data, then version-travels to the retained 2024
-snapshot. No general Iceberg maintenance suite is active.
+MWAA and Redshift Serverless use the same existing VPC and two private subnets.
+Redshift accepts port 5439 only from the MWAA security group. MWAA uses its
+execution role for AWS APIs and dbt uses Redshift Serverless IAM-role
+authentication. Terraform creates the corresponding password-disabled Redshift
+IAM user and grants only external-schema reads plus Gold schema create/usage.
+
+Private subnets must provide required AWS API and Python package access through
+NAT and/or VPC endpoints. This network is an explicit deployment prerequisite,
+not provisioned by this repository.
+
+## State boundaries
+
+The only mutable operational state is `ops.source_run_manifest`. It records
+the immutable source identity, stable run ID, current Bronze/Silver state,
+counts, snapshots, and failure details.
+
+Publication is separate durable release evidence. It is written only after dbt
+and both reconciliation invariants pass. Verification reads the published
+contract as a consumer would.
+
+## Cost boundary
+
+EMR Serverless auto-stops. Redshift Serverless bills for active work. Regular
+MWAA has a provisioned baseline cost, so Terraform defaults to the smallest
+chosen class and supplies a review-only bounded teardown plan. No teardown is
+applied automatically.

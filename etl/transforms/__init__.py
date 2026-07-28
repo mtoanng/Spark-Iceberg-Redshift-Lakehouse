@@ -1,4 +1,4 @@
-"""Pure transformations shared by NYC HVFHV Glue jobs and local fixture tests."""
+"""Pure transformations mirroring EMR Spark contracts for local fixture tests."""
 
 from .nyc_hvfhs import (
     BronzeBatch,

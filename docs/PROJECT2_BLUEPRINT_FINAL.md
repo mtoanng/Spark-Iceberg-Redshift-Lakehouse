@@ -1,63 +1,81 @@
-# Project 2 final blueprint
+# Final blueprint: production-shaped, cost-bounded lakehouse
 
 ## Objective
 
-Build a replayable, snapshot-governed monthly NYC TLC HVFHV lakehouse. The
-first controlled AWS release proves one immutable month, correct canonical
-rows, safe task retry/rerun, durable publication evidence, and one bounded
-Athena query.
+Prove the architecture and correctness semantics of an industrial monthly data
+product with a small deployment. The project verifies control-plane,
+cross-engine, identity, rerun, and publication behavior. It does not claim a
+TB/PB performance benchmark.
 
 ```text
-official monthly HVFHV Parquet + Taxi Zone CSV
--> S3 landing
--> Airflow 3
--> EMR Serverless/PySpark Bronze Iceberg
--> EMR Serverless/PySpark Silver Iceberg + quarantine
--> Redshift Serverless external Bronze/Silver schemas
--> Cosmos `DbtTaskGroup` -> dbt-redshift managed Gold
--> Athena + Redshift Data API reconciliation
--> deterministic publication JSON -> verification
+Upstream producer
+  -> immutable S3 landing
+  -> regular MWAA (Airflow 3)
+  -> EMR Serverless / PySpark Bronze
+  -> EMR Serverless / PySpark Silver + quarantine
+  -> S3 Iceberg + Glue Data Catalog
+  -> Redshift Serverless external schemas
+  -> dbt-redshift managed Gold
+  -> reconciliation
+  -> deterministic publication
+  -> bounded read-after-publish verification
 ```
 
-Glue Data Catalog is canonical metadata for the Iceberg Bronze, Silver,
-quarantine, and operational layers. Redshift Serverless owns managed Gold.
+## Architectural ownership
 
-## Source and identity
+| Boundary | Owner | Responsibility |
+| --- | --- | --- |
+| Input | Upstream producer + S3 | Land immutable objects and SHA-256 metadata |
+| Control plane | regular MWAA | Ordering, retry, rerun, backfill, task evidence |
+| Batch compute | EMR Serverless | Bronze and Silver/quarantine Spark work |
+| Open storage | S3 + Iceberg | ACID Bronze, Silver, quarantine, operational state |
+| Shared metadata | Glue Data Catalog | One catalog for EMR, Athena, and Spectrum |
+| Gold transform | one dbt-redshift build | Six tested managed Redshift relations |
+| Serving | Redshift Serverless | SQL contract for analytics consumers |
+| Release | S3 publication JSON | Durable source/count/snapshot/dbt evidence |
 
-One logical month is immutable and identified by source URI, SHA-256, byte
-size, year, and month. A changed object for an existing month is blocked,
-including with `force=true`. The same immutable source has one stable run ID.
+There is one orchestrator, one state table, one dbt execution path, and one
+publication path.
 
-Identity is versioned:
+## Input boundary
 
-- `row_id`: SHA-256 of policy version plus every ordered canonical source field
-  declared for the source year. Nulls, timestamps, integers, and decimals have
-  explicit canonical representations. It excludes ingestion and derived fields.
-- `business_trip_key`: smaller probable-trip key for investigation. A fare,
-  tip, or flag correction retains the business key but changes `row_id`.
-- `identity_policy_version`: stored in Bronze, Silver, quarantine, fact, run
-  manifest, and publication artifact.
+The codebase does not download or upload NYC TLC data. Before a DAG run, the
+producer must provide:
 
-The only policy implementation is `etl/contracts/nyc_hvfhs_identity.py`.
-Python and Spark must pass the same pinned golden vectors. The 2025 policy adds
-`cbd_congestion_fee`; 2024 does not invent a value.
+```text
+s3://<bucket>/landing/fhvhv_tripdata_YYYY-MM.parquet
+s3://<bucket>/reference/taxi_zone_lookup.csv
+```
 
-## Layer contracts
+Each object is non-empty and has lowercase SHA-256 in S3 user metadata key
+`sha256`. Airflow uses `HeadObject` to bind the request to URI, checksum, and
+size before it submits Spark. This is the project input contract, not an
+ingestion subsystem.
 
-Landing verifies S3 metadata checksum and byte size before Spark reads.
+## Identity and layers
 
-Bronze preserves source fields and adds source URI/file, year/month, checksum,
-run ID, ingestion timestamp, and the three identity fields. It replaces only
-the requested month partition and records count plus snapshot ID.
+One month is identified by URI + SHA-256 + size + year + month. Its stable run
+ID is derived from that identity.
 
-Bronze checks source existence, checksum, size, required schema, and non-empty
-input before it publishes. Silver owns every row-level validation decision,
-reason priority, exact deduplication, and quarantine output.
+- `row_id` is the SHA-256 of the ordered, versioned exact-row representation.
+- `business_trip_key` is a probable-trip analytical key only.
+- `identity_policy_version` makes the ordered field set explicit.
+- The sole policy implementation is
+  `etl/contracts/nyc_hvfhs_identity.py`.
 
-Silver owns timestamp ordering, zone resolution, numeric presence/non-negative
-rules, exact `row_id` deduplication, deterministic reason priority, typed
-canonical fields, and derived date/hour/duration. It classifies every Bronze
-row once and replaces only requested month partitions.
+Bronze preserves source fields and adds ingestion/identity metadata. It checks
+the object, schema, and non-empty input, creates the locked base Iceberg tables
+when absent, and replaces only the requested month.
+
+Taxi Zones is one immutable reference table, loaded once. A changed reference
+requires an explicit migration.
+
+Silver owns timestamp, zone, numeric, exact-deduplication, and reason-priority
+rules. Every Bronze row is written exactly once to Silver or quarantine:
+
+```text
+bronze_count = silver_count + quarantine_count
+```
 
 Gold remains exactly:
 
@@ -70,71 +88,82 @@ mart_hourly_zone_demand
 mart_operator_metrics
 ```
 
-`fct_trips` is one row per canonical Silver `row_id`; the dbt-redshift
-incremental merge uses `row_id`.
+`fct_trips` merges on `row_id`. The cross-engine release gate also requires:
 
-## Orchestration and retry
+```text
+silver_count = gold_fct_trips_count
+```
 
-Airflow 3 keeps this topology:
+## Orchestration and rerun
+
+The monthly DAG is:
 
 ```text
 prepare_month
 -> bronze_ingestion_emr
 -> silver_transform_emr
--> Cosmos `dbt_build` task group
+-> dbt_build
 -> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
 -> verification
 ```
 
-The DAG is manual with `year`, `month`, and `force`. Cosmos Watcher mode runs
-one full `dbt build` producer and renders model-level watchers. Its producer
-callback uploads the complete `run_results.json` to the deterministic
-publication prefix; `dbt_result_artifact` verifies that object before
-reconciliation. Airflow retry, manual task
-clear, and deterministic monthly rerun reuse immutable source identity and
-replace month-scoped outputs. `force` never accepts changed content. Four
-consecutive months remain a fixed companion DAG, not a generic framework.
+`dbt_build` is one `BashOperator` because dbt already owns model/test
+dependencies. Airflow owns only the Gold stage boundary and archives the first
+successful `run_results.json`.
 
-## Manifest and publication
+The completed identical source reuses existing Bronze/Silver/quarantine
+snapshots. dbt safely rebuilds/merges Gold, reconciliation runs again, and the
+same logical publication is reused. Changed source identity is rejected. There
+is no second manifest state machine and no `force` switch.
 
-The operational Iceberg manifest stores source identity, stable run ID,
-identity policy, status, validation, Bronze/Silver/quarantine/Gold counts,
-layer snapshot IDs, failure stage/message, timestamps, publication status, and
-artifact URI.
+The companion backfill DAG triggers exactly four monthly DAG runs in order. It
+is intentionally not a generic framework.
 
-After dbt and reconciliation, publication records the three open-layer table
-identifiers and available Iceberg snapshots, Redshift Gold database/schema and
-six relation names, counts, dbt artifact URI/SHA-256, and reconciliation
-result. It writes deterministic JSON to the existing project bucket. Gold is
-never represented as an Iceberg path or snapshot.
+## Publication and verification
 
-## Athena
+Reconciliation reads three open-layer counts and the operational snapshot IDs
+through Athena, then reads the Gold fact count through Redshift Data API.
+Publication uses that evidence directly; it does not query "latest snapshot"
+again.
 
-Athena is used only for bounded Bronze, Silver, and quarantine reads. Redshift
-Data API verifies the six Gold relations, month-scoped `fct_trips`, and both
-marts. Queries are read-only, bounded, and month-scoped.
+The publication JSON records source identity, policy, three table/snapshot/count
+triples, six Gold relation names, the dbt artifact URI/SHA-256, and
+reconciliation evidence. The key is stable for the immutable source. Attempt
+timestamps and query IDs do not turn an identical rerun into a conflicting
+release.
 
-## Single advanced semantic
+Verification is intentionally small:
 
-After the 2024 baseline, run the initializer with the explicit 2025 evolution
-flag to add nullable `cbd_congestion_fee` to Bronze, Silver, and quarantine.
-Ingest one 2025 month, retain the new snapshots, verify the current query reads
-both years, and run Athena version travel against the retained 2024 snapshot.
-No compaction, expiration, orphan deletion, partition evolution, or lifecycle
-automation is in scope.
+1. read publication and verify its SHA-256 and identity;
+2. read one month-scoped Silver count through Athena;
+3. read one month-scoped Gold fact count through Redshift;
+4. compare both with the published counts.
 
 ## Deployment boundary
 
-Keep one persistent EMR Serverless Spark application with auto-start/auto-stop,
-one Redshift Serverless namespace/workgroup, Terraform S3/Glue
-Catalog/IAM/Athena resources, and the optional temporary EC2 Airflow runner
-with instance profile. Cosmos is limited to the in-process dbt-redshift
-`DbtTaskGroup`; do not add MWAA, EKS, Lake Formation, KMS management,
-dashboards, alarms, or extra buckets.
+Terraform defines one private regular MWAA environment, one auto-stopping EMR
+Serverless application, one Redshift Serverless namespace/workgroup, one
+private S3 bucket, three Glue namespaces, IAM boundaries, and one bounded
+Athena workgroup.
 
-`CODEBASE-READY` requires all credential-independent contracts to pass.
-`DEPLOYMENT-VERIFIED` remains `NOT VERIFIED` until a real bounded AWS run
-retains source, task, count, snapshot, dbt, Athena, retry/rerun, and teardown
-evidence.
+Regular MWAA is provisioned and does not scale to zero. `mw1.small`, two maximum
+workers, and the separately approved teardown plan bound the baseline cost.
+Terraform requires an existing VPC and two private subnets with the AWS/PyPI
+egress needed by MWAA.
+
+## Deliberate exclusions
+
+No producer uploader, Lambda/EventBridge trigger, Cosmos, EC2 Airflow runner,
+MWAA Serverless, EKS, Glue ETL job, Lake Formation, dashboard, streaming
+system, lineage platform, generic dataset framework, or Iceberg maintenance
+suite is part of the baseline.
+
+The sole post-baseline semantic is adding nullable `cbd_congestion_fee` for
+2025, ingesting a new snapshot, and querying the retained 2024 snapshot with
+Athena version travel.
+
+`CODEBASE-READY` requires all credential-independent checks to pass.
+`DEPLOYMENT-VERIFIED` remains **NOT VERIFIED** until a real bounded AWS run
+retains the required evidence.

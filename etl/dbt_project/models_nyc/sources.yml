@@ -9,6 +9,7 @@ sources:
         columns:
           - name: LocationID
             data_tests:
+              - unique
               - not_null
 
   - name: silver

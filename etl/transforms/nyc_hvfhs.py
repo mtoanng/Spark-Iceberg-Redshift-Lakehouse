@@ -1,8 +1,8 @@
 """Bronze/Silver row contracts for NYC HVFHV data.
 
 The functions in this module are intentionally pure Python so they can be
-tested with small fixtures on a laptop. Glue jobs use the same column and
-reason-code contract at production scale; this module neither starts Spark nor
+tested with small fixtures on a laptop. EMR Serverless uses the same identity
+and reason-code contracts at runtime; this module neither starts Spark nor
 writes canonical storage.
 """
 
