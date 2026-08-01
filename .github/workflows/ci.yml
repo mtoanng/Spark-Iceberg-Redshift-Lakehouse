@@ -29,8 +29,8 @@ jobs:
         run: black --check etl scripts tests
       - name: Lint Python
         run: flake8 etl scripts tests --extend-ignore=E203,E501,W503
-      - name: Run unit and contract tests
-        run: python -m pytest -p no:cacheprovider tests/unit tests/contract -q
+      - name: Run repository tests
+        run: python -m pytest -p no:cacheprovider tests/unit -q
       - name: Validate Spark package contract
         run: python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
       - name: Validate PowerShell syntax

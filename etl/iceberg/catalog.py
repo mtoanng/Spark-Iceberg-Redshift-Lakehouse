@@ -1,4 +1,4 @@
-"""Credential-free Iceberg DDL definitions used by the Glue initializer."""
+"""Credential-free Iceberg DDL definitions executed by EMR Spark."""
 
 from __future__ import annotations
 

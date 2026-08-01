@@ -25,7 +25,7 @@ def test_spark_package_is_deterministic_and_contains_runtime_contract(
         assert "etl/iceberg/catalog.py" in archive.namelist()
         assert "etl/spark_jobs/nyc_bronze_ingestion.py" in archive.namelist()
         assert "etl/spark_jobs/verify_nyc_snapshot.py" in archive.namelist()
-        assert "etl/orchestration/nyc_hvfhs_dbt.py" not in archive.namelist()
+        assert "etl/orchestration/nyc_hvfhs_cosmos.py" not in archive.namelist()
         assert "etl/transforms/nyc_hvfhs.py" not in archive.namelist()
         assert manifest["namespaces"] == ["bronze", "silver", "ops"]
     snapshot_job = (ROOT / "etl" / "spark_jobs" / "verify_nyc_snapshot.py").read_text(
@@ -90,7 +90,22 @@ def test_cloud_environment_has_no_static_key_contract() -> None:
     assert "AIRFLOW_VAR_REDSHIFT_WORKGROUP_NAME" in env
 
 
-def test_airflow_runtime_uses_one_plain_dbt_build_without_cosmos() -> None:
+def test_airflow_runtime_uses_cosmos_watcher_for_dbt_graph() -> None:
     requirements = (ROOT / "requirements-airflow.txt").read_text(encoding="utf-8")
-    assert "dbt-redshift==1.10.2" in requirements
-    assert "cosmos" not in requirements.lower()
+    assert "astronomer-cosmos==1.15.0" in requirements
+    assert "dbt-redshift" not in requirements
+    startup = (ROOT / "scripts" / "mwaa_startup.sh").read_text(encoding="utf-8")
+    assert "dbt-core==1.10.19" in startup
+    assert "dbt-redshift==1.10.2" in startup
+    assert "/usr/local/airflow/dbt_venv" in startup
+    terraform = (ROOT / "terraform" / "mwaa.tf").read_text(encoding="utf-8")
+    assert 'resource "aws_s3_object" "mwaa_startup"' in terraform
+    assert "startup_script_s3_path" in terraform
+    assert "startup_script_s3_object_version" in terraform
+    dag = (ROOT / "etl" / "dags" / "nyc_hvfhs_monthly_dag.py").read_text(
+        encoding="utf-8"
+    )
+    assert "DbtTaskGroup(" in dag
+    assert "ExecutionMode.WATCHER" in dag
+    assert 'Path("/usr/local/airflow/dbt_venv/bin/dbt")' in dag
+    assert "BashOperator" not in dag

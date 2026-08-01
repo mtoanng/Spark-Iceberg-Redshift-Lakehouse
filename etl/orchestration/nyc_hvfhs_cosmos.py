@@ -1,19 +1,11 @@
-"""Run one complete dbt build and retain its result artifact.
-
-The Airflow task treats dbt as one atomic Gold producer. dbt owns its model
-graph and tests; Airflow owns stage ordering, retry, and durable evidence.
-"""
+"""Durable dbt artifacts for the Cosmos-owned Gold task group."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
-import tempfile
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import boto3
@@ -68,9 +60,9 @@ def archive_dbt_run_results(
     run_id: str,
     s3_client: Any | None = None,
 ) -> str:
-    artifact = project_dir / "target" / "run_results.json"
+    artifact = Path(project_dir) / "target" / "run_results.json"
     if not artifact.is_file():
-        raise FileNotFoundError(f"dbt artifact does not exist: {artifact}")
+        raise FileNotFoundError(f"Cosmos dbt artifact does not exist: {artifact}")
     payload = artifact.read_bytes()
     _validated_run_results(payload)
     uri = dbt_result_uri(publication_prefix_uri, source_year, source_month, run_id)
@@ -104,6 +96,25 @@ def archive_dbt_run_results(
     return uri
 
 
+def archive_cosmos_dbt_run_results(
+    project_dir: Path,
+    context: Mapping[str, Any],
+    **_: Any,
+) -> None:
+    """Archive the producer's full run_results before Cosmos removes its copy."""
+
+    from airflow.sdk import Variable
+
+    audit = context["ti"].xcom_pull(task_ids="prepare_month")
+    archive_dbt_run_results(
+        project_dir,
+        publication_prefix_uri=Variable.get("nyc_publication_prefix_uri"),
+        source_year=audit["source_year"],
+        source_month=audit["source_month"],
+        run_id=audit["run_id"],
+    )
+
+
 def require_dbt_result_artifact(
     publication_prefix_uri: str,
     source_year: int | str,
@@ -120,59 +131,3 @@ def require_dbt_result_artifact(
     if len(checksum) != 64:
         raise ValueError(f"dbt artifact is missing its SHA-256 metadata: {uri}")
     return uri
-
-
-def run_dbt_build_from_environment() -> None:
-    """Entry point invoked by Airflow's BashOperator on one worker."""
-
-    required = (
-        "DBT_PROJECT_PATH",
-        "DBT_PUBLICATION_PREFIX_URI",
-        "DBT_SOURCE_YEAR",
-        "DBT_SOURCE_MONTH",
-        "DBT_RUN_ID",
-    )
-    missing = [name for name in required if not os.environ.get(name)]
-    if missing:
-        raise ValueError(f"Missing dbt runtime variables: {', '.join(missing)}")
-
-    source_project = Path(os.environ["DBT_PROJECT_PATH"]).resolve()
-    if not (source_project / "dbt_project.yml").is_file():
-        raise FileNotFoundError(f"Invalid dbt project path: {source_project}")
-
-    with tempfile.TemporaryDirectory(prefix="nyc-hvfhs-dbt-") as temporary:
-        project = Path(temporary) / "project"
-        shutil.copytree(source_project, project)
-        subprocess.run(
-            [
-                "dbt",
-                "build",
-                "--project-dir",
-                str(project),
-                "--profiles-dir",
-                str(project),
-                "--target",
-                "redshift",
-                "--no-partial-parse",
-                "--vars",
-                json.dumps(
-                    {
-                        "source_year": int(os.environ["DBT_SOURCE_YEAR"]),
-                        "source_month": int(os.environ["DBT_SOURCE_MONTH"]),
-                    },
-                    separators=(",", ":"),
-                ),
-            ],
-            check=True,
-        )
-        archive_dbt_run_results(
-            project,
-            publication_prefix_uri=os.environ["DBT_PUBLICATION_PREFIX_URI"],
-            source_year=os.environ["DBT_SOURCE_YEAR"],
-            source_month=os.environ["DBT_SOURCE_MONTH"],
-            run_id=os.environ["DBT_RUN_ID"],
-        )
-
-
-if __name__ == "__main__":
-    run_dbt_build_from_environment()

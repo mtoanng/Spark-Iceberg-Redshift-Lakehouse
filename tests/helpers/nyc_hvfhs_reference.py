@@ -13,13 +13,15 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 
-from etl.contracts.nyc_hvfhs_identity import identity_policy_version
+from etl.contracts.nyc_hvfhs_identity import (
+    business_trip_key,
+    identity_policy_version,
+    row_id,
+)
 from etl.contracts.nyc_hvfhs_quality import reason_code
 from etl.sources.nyc_hvfhs import (
     SourceContractError,
     SourceFile,
-    canonical_business_trip_key,
-    canonical_row_id,
     validate_trip_schema,
 )
 
@@ -99,8 +101,8 @@ def bronze_records(
     rows = []
     for record in materialized:
         identity = {
-            "row_id": canonical_row_id(record, source.source_year),
-            "business_trip_key": canonical_business_trip_key(record),
+            "row_id": row_id(record, source.source_year),
+            "business_trip_key": business_trip_key(record),
             "identity_policy_version": identity_policy_version(source.source_year),
         }
         rows.append({**record, **metadata, **identity})

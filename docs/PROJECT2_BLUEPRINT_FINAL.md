@@ -30,7 +30,7 @@ Upstream producer
 | Batch compute | EMR Serverless | Bronze and Silver/quarantine Spark work |
 | Open storage | S3 + Iceberg | ACID Bronze, Silver, quarantine, operational state |
 | Shared metadata | Glue Data Catalog | Metadata only; one catalog shared by EMR and Spectrum |
-| Gold transform | one dbt-redshift build | Six tested managed Redshift relations |
+| Gold transform | Cosmos Watcher + dbt-redshift | One build, model/test visibility, six managed Redshift relations |
 | Serving | Redshift Serverless | SQL contract for analytics consumers |
 | Release | S3 publication JSON | Durable source/count/snapshot/dbt evidence |
 
@@ -109,9 +109,12 @@ prepare_month
 -> verification
 ```
 
-`dbt_build` is one `BashOperator` because dbt already owns model/test
-dependencies. Airflow owns only the Gold stage boundary and archives the first
-successful `run_results.json`.
+`dbt_build` is a Cosmos `DbtTaskGroup` in Watcher mode. Cosmos runs one
+`dbt build` producer, projects model/test status into Airflow, and archives the
+complete successful `run_results.json` before its temporary project is removed.
+dbt remains the owner of model dependencies and SQL execution. A bounded MWAA
+startup script installs the pinned dbt adapter in a separate virtualenv because
+Airflow 3.2.1 and dbt have incompatible transitive constraints.
 
 The completed identical source reuses existing Bronze/Silver/quarantine
 snapshots. dbt safely rebuilds/merges Gold, reconciliation runs again, and the
@@ -154,8 +157,8 @@ egress needed by MWAA.
 
 ## Deliberate exclusions
 
-No producer uploader, Lambda/EventBridge trigger, Cosmos, EC2 Airflow runner,
-MWAA Serverless, EKS, Glue ETL job, second query engine, Lake Formation,
+No producer uploader, Lambda/EventBridge trigger, EC2 Airflow runner, MWAA
+Serverless, EKS, Glue ETL job, second query engine, Lake Formation,
 dashboard, streaming system, lineage platform, generic dataset framework, or
 Iceberg maintenance suite is part of the baseline.
 

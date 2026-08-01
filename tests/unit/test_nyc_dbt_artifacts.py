@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from etl.orchestration.nyc_hvfhs_dbt import (
+from etl.orchestration.nyc_hvfhs_cosmos import (
     archive_dbt_run_results,
     require_dbt_result_artifact,
 )

@@ -9,24 +9,26 @@ from urllib.parse import urlparse
 
 import boto3
 from airflow.providers.amazon.aws.operators.emr import EmrServerlessStartJobOperator
-from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.sdk import DAG, Param, Variable
+from cosmos import DbtTaskGroup
+from cosmos.config import ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, InvocationMode, TestBehavior
 
 from etl.contracts.nyc_hvfhs_identity import identity_policy_version
-from etl.orchestration.nyc_hvfhs_dbt import require_dbt_result_artifact
+from etl.orchestration.nyc_hvfhs_cosmos import require_dbt_result_artifact
 from etl.orchestration.nyc_hvfhs_publication import publish_month
 from etl.orchestration.nyc_hvfhs_reconciliation import reconcile_month
 from etl.orchestration.nyc_hvfhs_runs import (
     MonthlyRunRequest,
-    audit_for_source,
     sequential_backfill_requests,
 )
 from etl.orchestration.nyc_hvfhs_verification import verify_month
 from etl.sources.nyc_hvfhs import (
     SourceFile,
     monthly_trip_filename,
+    stable_run_id,
     validate_landed_source,
 )
 
@@ -34,6 +36,8 @@ from etl.sources.nyc_hvfhs import (
 MONTHLY_DAG_ID = "nyc_hvfhs_monthly"
 BACKFILL_DAG_ID = "nyc_hvfhs_four_month_backfill"
 DBT_PROJECT_PATH = Path(__file__).resolve().parents[1] / "dbt_project"
+DBT_PROFILES_PATH = DBT_PROJECT_PATH / "profiles.yml"
+DBT_EXECUTABLE_PATH = Path("/usr/local/airflow/dbt_venv/bin/dbt")
 
 DEFAULT_ARGS = {
     "owner": "data-engineering",
@@ -120,16 +124,15 @@ def _prepare_month(year: int, month: int) -> dict[str, object]:
         source_size_bytes=size_bytes,
     )
     validate_landed_source(source)
-    audit = audit_for_source(request, source)
     taxi_zone_uri = Variable.get("nyc_taxi_zone_uri")
     taxi_zone_checksum, _ = _s3_identity(taxi_zone_uri)
     return {
-        "run_id": audit.run_id,
-        "source_year": audit.source_year,
-        "source_month": audit.source_month,
-        "source_uri": audit.source_uri,
-        "source_checksum": audit.source_checksum,
-        "source_size_bytes": audit.source_size_bytes,
+        "run_id": stable_run_id(source),
+        "source_year": source.source_year,
+        "source_month": source.source_month,
+        "source_uri": source.source_uri,
+        "source_checksum": source.source_checksum,
+        "source_size_bytes": source.source_size_bytes,
         "identity_policy_version": identity_policy_version(request.year),
         "taxi_zone_uri": taxi_zone_uri,
         "taxi_zone_checksum": taxi_zone_checksum,
@@ -201,21 +204,41 @@ with DAG(
         ),
     )
 
-    dbt_build = BashOperator(
-        task_id="dbt_build",
-        bash_command="python -m etl.orchestration.nyc_hvfhs_dbt",
-        append_env=True,
-        env={
-            "DBT_PROJECT_PATH": str(DBT_PROJECT_PATH),
-            "DBT_PUBLICATION_PREFIX_URI": "{{ var.value.nyc_publication_prefix_uri }}",
-            "DBT_SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "DBT_SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "DBT_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "REDSHIFT_HOST": "{{ var.value.redshift_host }}",
-            "REDSHIFT_WORKGROUP_NAME": "{{ var.value.redshift_workgroup_name }}",
-            "REDSHIFT_DATABASE": "{{ var.value.redshift_database }}",
-            "AWS_ACCOUNT_ID": "{{ var.value.aws_account_id }}",
-            "AWS_REGION": "{{ var.value.aws_region }}",
+    dbt_build = DbtTaskGroup(
+        group_id="dbt_build",
+        project_config=ProjectConfig(
+            dbt_project_path=DBT_PROJECT_PATH,
+            install_dbt_deps=False,
+        ),
+        profile_config=ProfileConfig(
+            profile_name="nyc_hvfhs_lakehouse",
+            target_name="redshift",
+            profiles_yml_filepath=DBT_PROFILES_PATH,
+        ),
+        render_config=RenderConfig(
+            test_behavior=TestBehavior.BUILD,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+        ),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.WATCHER,
+            invocation_mode=InvocationMode.SUBPROCESS,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+            setup_operator_args={
+                "callback": "etl.orchestration.nyc_hvfhs_cosmos.archive_cosmos_dbt_run_results"
+            },
+        ),
+        operator_args={
+            "vars": {
+                "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            },
+            "env": {
+                "REDSHIFT_HOST": "{{ var.value.redshift_host }}",
+                "REDSHIFT_WORKGROUP_NAME": "{{ var.value.redshift_workgroup_name }}",
+                "REDSHIFT_DATABASE": "{{ var.value.redshift_database }}",
+                "AWS_ACCOUNT_ID": "{{ var.value.aws_account_id }}",
+                "AWS_REGION": "{{ var.value.aws_region }}",
+            },
         },
     )
 

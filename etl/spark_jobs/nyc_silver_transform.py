@@ -34,17 +34,16 @@ def _optional_arg(name: str, default: str) -> str:
 
 
 def _table(namespace: str, name: str) -> str:
-    return f"{_optional_arg('CATALOG_NAME', 'glue_catalog')}.{_optional_arg(f'{namespace.upper()}_DATABASE', namespace)}.{name}"
+    catalog = _optional_arg("CATALOG_NAME", "glue_catalog")
+    database = _optional_arg(f"{namespace.upper()}_DATABASE", namespace)
+    return f"{catalog}.{database}.{name}"
 
 
-BRONZE_TRIPS_TABLE, BRONZE_ZONES_TABLE = _table("bronze", "bronze_hvfhs_trips"), _table(
-    "bronze", "bronze_taxi_zones"
-)
-SILVER_TRIPS_TABLE, QUARANTINE_TABLE, MANIFEST_TABLE = (
-    _table("silver", "silver_trips"),
-    _table("silver", "quarantine_trips"),
-    _table("ops", "source_run_manifest"),
-)
+BRONZE_TRIPS_TABLE = _table("bronze", "bronze_hvfhs_trips")
+BRONZE_ZONES_TABLE = _table("bronze", "bronze_taxi_zones")
+SILVER_TRIPS_TABLE = _table("silver", "silver_trips")
+QUARANTINE_TABLE = _table("silver", "quarantine_trips")
+MANIFEST_TABLE = _table("ops", "source_run_manifest")
 
 
 def main() -> None:
@@ -56,7 +55,15 @@ def main() -> None:
         args["INGESTION_RUN_ID"],
     )
     status = spark.sql(
-        f"SELECT run_status, failure_stage FROM {MANIFEST_TABLE} WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}' ORDER BY updated_at DESC LIMIT 1"
+        f"""
+        SELECT run_status, failure_stage
+        FROM {MANIFEST_TABLE}
+        WHERE source_year = {year}
+          AND source_month = {month}
+          AND ingestion_run_id = '{run_id}'
+        ORDER BY updated_at DESC
+        LIMIT 1
+        """
     ).collect()
     if status and status[0].run_status == "silver_published":
         return
@@ -67,6 +74,7 @@ def main() -> None:
         status[0].run_status != "bronze_published" and not retrying_silver
     ):
         raise ValueError("Silver publication requires the requested Bronze run.")
+    classified = None
     try:
         trips = spark.table(BRONZE_TRIPS_TABLE).filter(
             (col("_source_year") == year)
@@ -179,20 +187,40 @@ def main() -> None:
         if silver_snapshot is None or quarantine_snapshot is None:
             raise ValueError("Silver publication must expose both Iceberg snapshots.")
         spark.sql(
-            f"UPDATE {MANIFEST_TABLE} SET run_status='silver_published', silver_row_count={silver_count}, "
-            f"quarantine_row_count={quarantine_count}, silver_snapshot_id='{silver_snapshot.snapshot_id}', "
-            f"quarantine_snapshot_id='{quarantine_snapshot.snapshot_id}', completed_at=current_timestamp(), "
-            f"updated_at=current_timestamp(), failure_stage=NULL, failure_message=NULL "
-            f"WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
+            f"""
+            UPDATE {MANIFEST_TABLE}
+            SET run_status = 'silver_published',
+                silver_row_count = {silver_count},
+                quarantine_row_count = {quarantine_count},
+                silver_snapshot_id = '{silver_snapshot.snapshot_id}',
+                quarantine_snapshot_id = '{quarantine_snapshot.snapshot_id}',
+                completed_at = current_timestamp(),
+                updated_at = current_timestamp(),
+                failure_stage = NULL,
+                failure_message = NULL
+            WHERE source_year = {year}
+              AND source_month = {month}
+              AND ingestion_run_id = '{run_id}'
+            """
         )
-        classified.unpersist()
     except Exception as error:
-        if "classified" in locals():
-            classified.unpersist()
+        failure_message = str(error).replace("'", "''")[:2000]
         spark.sql(
-            f"UPDATE {MANIFEST_TABLE} SET run_status='failed', failure_stage='silver', failure_message='{str(error).replace("'", "''")[:2000]}', updated_at=current_timestamp() WHERE source_year={year} AND source_month={month} AND ingestion_run_id='{run_id}'"
+            f"""
+            UPDATE {MANIFEST_TABLE}
+            SET run_status = 'failed',
+                failure_stage = 'silver',
+                failure_message = '{failure_message}',
+                updated_at = current_timestamp()
+            WHERE source_year = {year}
+              AND source_month = {month}
+              AND ingestion_run_id = '{run_id}'
+            """
         )
         raise
+    finally:
+        if classified is not None:
+            classified.unpersist()
 
 
 if __name__ == "__main__":

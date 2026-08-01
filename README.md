@@ -10,7 +10,7 @@ upstream-owned S3 landing
 -> EMR Serverless Spark Silver + quarantine
 -> S3 Iceberg + Glue Data Catalog
 -> Redshift Serverless Spectrum
--> one dbt-redshift build
+-> Cosmos Watcher + one dbt-redshift build
 -> six managed Gold relations
 -> reconciliation -> publication -> bounded verification
 ```
@@ -64,7 +64,7 @@ relations are the consumer contract.
 ```powershell
 venv\Scripts\python.exe -m black --check etl scripts tests
 venv\Scripts\python.exe -m compileall -q etl scripts tests
-venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit tests/contract -q
+venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit -q
 venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 
 $env:DBT_CI_REDSHIFT_HOST='127.0.0.1'

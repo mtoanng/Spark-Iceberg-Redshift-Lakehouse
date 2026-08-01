@@ -50,6 +50,13 @@ resource "aws_s3_object" "mwaa_requirements" {
   etag   = filemd5("${path.module}/../requirements-airflow.txt")
 }
 
+resource "aws_s3_object" "mwaa_startup" {
+  bucket = aws_s3_bucket.lakehouse.id
+  key    = "${var.mwaa_dag_s3_prefix}/startup.sh"
+  source = "${path.module}/../scripts/mwaa_startup.sh"
+  etag   = filemd5("${path.module}/../scripts/mwaa_startup.sh")
+}
+
 resource "aws_security_group" "mwaa" {
   name        = "${local.mwaa_environment_name}-mwaa"
   description = "Self-referencing MWAA traffic and controlled outbound access."
@@ -80,13 +87,15 @@ resource "aws_mwaa_environment" "orchestration" {
   source_bucket_arn  = aws_s3_bucket.lakehouse.arn
   dag_s3_path        = var.mwaa_dag_s3_prefix
 
-  requirements_s3_path           = aws_s3_object.mwaa_requirements.key
-  requirements_s3_object_version = aws_s3_object.mwaa_requirements.version_id
-  min_workers                    = 1
-  max_workers                    = var.mwaa_max_workers
-  schedulers                     = 2
-  webserver_access_mode          = "PUBLIC_AND_PRIVATE"
-  endpoint_management            = "SERVICE"
+  requirements_s3_path             = aws_s3_object.mwaa_requirements.key
+  requirements_s3_object_version   = aws_s3_object.mwaa_requirements.version_id
+  startup_script_s3_path           = aws_s3_object.mwaa_startup.key
+  startup_script_s3_object_version = aws_s3_object.mwaa_startup.version_id
+  min_workers                      = 1
+  max_workers                      = var.mwaa_max_workers
+  schedulers                       = 2
+  webserver_access_mode            = "PUBLIC_AND_PRIVATE"
+  endpoint_management              = "SERVICE"
 
   airflow_configuration_options = {
     "core.load_examples" = "False"
@@ -125,5 +134,6 @@ resource "aws_mwaa_environment" "orchestration" {
     aws_iam_role_policy.mwaa_pipeline,
     aws_s3_bucket_versioning.lakehouse,
     aws_s3_object.mwaa_source,
+    aws_s3_object.mwaa_startup,
   ]
 }

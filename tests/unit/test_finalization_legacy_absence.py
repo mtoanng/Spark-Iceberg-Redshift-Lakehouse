@@ -37,7 +37,8 @@ def test_great_expectations_and_glue_etl_are_absent_from_active_runtime() -> Non
     assert "gluejoboperator" not in text
     assert "interactive session" not in text
     assert "dbt" + "-glue" not in text
-    assert "cosmos" not in text
+    assert "astronomer-cosmos==1.15.0" in text
+    assert "dbttaskgroup(" in text
     assert "aws_instance.airflow_runner" not in text
 
 

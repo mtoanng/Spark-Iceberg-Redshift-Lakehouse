@@ -118,7 +118,7 @@ Run Python, contract, packaging, and hygiene checks:
 venv\Scripts\python.exe -m black --check etl scripts tests
 venv\Scripts\python.exe -m flake8 etl scripts tests --extend-ignore=E203,E501,W503
 venv\Scripts\python.exe -m compileall -q etl scripts tests
-venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit tests/contract -q
+venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit -q
 venv\Scripts\python.exe scripts/check_repository_hygiene.py
 venv\Scripts\python.exe scripts/package_spark_jobs.py `
   --output build/nyc_spark_jobs.zip --check
@@ -132,6 +132,12 @@ nyc_bronze_ingestion.py
 nyc_silver_transform.py
 verify_nyc_snapshot.py
 ```
+
+MWAA installs Cosmos through `requirements-airflow.txt`. Its startup script
+creates `/usr/local/airflow/dbt_venv` with the pinned dbt-redshift runtime;
+Cosmos Watcher invokes that isolated `dbt` binary. Do not move dbt into the main
+MWAA requirements file: Airflow 3.2.1's constraint set conflicts with dbt's
+transitive dependencies.
 
 Parse and compile the dbt graph without contacting Redshift:
 
@@ -240,7 +246,85 @@ Set these values in `terraform/terraform.tfvars`:
 Do not reuse a source/data bucket or project name from another architecture.
 The selected S3 bucket name must match the producer's destination.
 
-### 5.1 Verify the existing network
+### 5.1 Verify service quotas and current usage
+
+Quota checks must use the same account and Region as Terraform. This deployment
+needs the following headroom; higher default quotas elsewhere are not a reason
+to skip checking the account's applied values:
+
+| Service | Deployment demand | Pass criterion before plan |
+| --- | --- | --- |
+| Amazon MWAA | 1 environment, maximum 2 workers | At least 1 environment slot remains and the applied workers-per-environment quota is at least 2. |
+| EMR Serverless | At most 4 concurrent vCPUs | At least 4 regional concurrent vCPUs remain. Jobs in this project are sequential. |
+| Redshift Serverless | 1 namespace, 1 workgroup, 8 base RPUs | At least 1 namespace and workgroup slot remain and aggregate base-RPU headroom is at least 8. |
+| IAM | 3 service roles | At least 3 role slots remain. |
+| Amazon VPC | 2 security groups plus service-managed ENIs | At least 2 security-group slots remain; both selected subnets must also have free IPv4 addresses. |
+| Glue Data Catalog | 3 databases and 5 Iceberg tables | At least 3 database and 5 table slots remain. No Glue job quota is involved. |
+| Amazon S3 | 1 general-purpose bucket | At least 1 bucket slot remains and the chosen bucket name is globally available. |
+
+First list the applied quotas through **Service Quotas**. The caller needs
+`servicequotas:ListServices`, `servicequotas:ListServiceQuotas`,
+`servicequotas:GetServiceQuota`, and `servicequotas:GetAWSDefaultServiceQuota`.
+An `AccessDeniedException` is a failed preflight, not proof that defaults apply:
+
+```powershell
+$AwsRegion = 'us-east-1'
+
+$QuotaServices = aws service-quotas list-services `
+  --region $AwsRegion `
+  --output json | ConvertFrom-Json
+
+$RequiredQuotaServices = $QuotaServices.Services | Where-Object {
+  $_.ServiceName -match 'Managed Workflows|EMR Serverless|Redshift|Virtual Private Cloud|Identity and Access Management|Glue|Simple Storage Service'
+}
+$RequiredQuotaServices | Sort-Object ServiceName |
+  Format-Table ServiceName, ServiceCode
+
+foreach ($Service in $RequiredQuotaServices) {
+  Write-Host "`n=== $($Service.ServiceName) [$($Service.ServiceCode)] ==="
+  aws service-quotas list-service-quotas `
+    --region $AwsRegion `
+    --service-code $Service.ServiceCode `
+    --query 'Quotas[].{Name:QuotaName,Applied:Value,Adjustable:Adjustable,Code:QuotaCode}' `
+    --output table
+}
+```
+
+Do not rely on quota values alone. Record current usage with read-only service
+APIs so that existing resources are subtracted from the applied limits:
+
+```powershell
+aws mwaa list-environments --region $AwsRegion --output json
+aws emr-serverless list-applications --region $AwsRegion --output json
+aws redshift-serverless list-namespaces --region $AwsRegion --output json
+aws redshift-serverless list-workgroups --region $AwsRegion --output json
+aws iam get-account-summary --output json
+
+aws glue get-databases `
+  --region $AwsRegion `
+  --query 'length(DatabaseList)' --output text
+
+aws s3api list-buckets `
+  --query 'length(Buckets)' --output text
+
+aws ec2 describe-security-groups `
+  --region $AwsRegion `
+  --query 'length(SecurityGroups)' --output text
+```
+
+The most likely binding quota is EMR Serverless concurrent vCPUs: the committed
+application maximum is 4 vCPUs, while AWS documents a default regional quota of
+16, and new accounts can start lower. MWAA's documented defaults are 10
+environments, 25 workers per environment, and 5 webservers per environment.
+Redshift Serverless documents default limits of 25 namespaces and 25 workgroups.
+These are reference defaults only; the applied account values above decide the
+deployment.
+
+Request quota increases before `terraform apply`; approval can take time. Do
+not compensate for an exhausted quota by raising worker concurrency, sharing a
+legacy namespace, or applying into another project's state.
+
+### 5.2 Verify the existing network
 
 Set temporary shell values matching tfvars:
 
@@ -475,7 +559,7 @@ Wait for DAG synchronization, then verify:
 prepare_month
 -> bronze_ingestion_emr
 -> silver_transform_emr
--> dbt_build
+-> dbt_build (Cosmos Watcher task group)
 -> dbt_result_artifact
 -> reconciliation
 -> publication_manifest
@@ -484,7 +568,9 @@ prepare_month
 
 If the DAG is absent, inspect MWAA DAG-processing logs. If requirements failed,
 inspect MWAA scheduler/webserver logs and verify subnet egress before changing
-package versions.
+package versions. If Cosmos cannot find dbt, inspect startup-script logs and
+require `/usr/local/airflow/dbt_venv/bin/dbt --version` to succeed on each MWAA
+component.
 
 ## 10. Prove one immutable month
 
@@ -505,7 +591,7 @@ Expected responsibilities:
 | `prepare_month` | Reads URI, SHA-256 metadata, byte size, and creates the stable run ID. |
 | `bronze_ingestion_emr` | Verifies input, writes one Bronze partition, and records its Iceberg snapshot. |
 | `silver_transform_emr` | Validates/deduplicates the month and writes Silver plus deterministic quarantine. |
-| `dbt_build` | Builds/tests exactly six managed Gold relations in Redshift. |
+| `dbt_build` | Cosmos runs one dbt build and exposes model/test states while producing exactly six managed Gold relations. |
 | `dbt_result_artifact` | Confirms a checksummed dbt `run_results.json` in S3. |
 | `reconciliation` | Enforces `Bronze = Silver + quarantine` and `Silver = Gold`. |
 | `publication_manifest` | Writes or safely reuses one immutable release JSON. |

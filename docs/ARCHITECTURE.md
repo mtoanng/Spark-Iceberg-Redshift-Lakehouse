@@ -16,7 +16,7 @@ regular MWAA / Airflow 3
                                                    |
                                               Redshift Serverless
                                                       |
-                                                 dbt managed Gold
+                                           Cosmos + dbt managed Gold
                                                       |
                                       reconcile -> publish -> verify
 ```
@@ -31,7 +31,11 @@ separate:
 - EMR Serverless performs Spark work and owns no persistent cluster.
 - Redshift Spectrum is the only query path for Bronze, Silver, quarantine, and
   operational Iceberg tables.
-- dbt creates the managed serving model inside Redshift.
+- Cosmos Watcher exposes the dbt model/test graph in Airflow while one
+  `dbt build` creates the managed serving model inside Redshift.
+- MWAA installs Cosmos in the Airflow environment and its startup script creates
+  an isolated dbt virtualenv; this preserves Watcher mode without mixing dbt and
+  Airflow's conflicting dependency sets.
 - MWAA controls stage ordering but contains no transformation logic.
 - Reconciliation and verification use Redshift Data API; there is no second
   query engine.

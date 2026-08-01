@@ -11,21 +11,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import re
-from typing import Iterable, Mapping
+from typing import Iterable
 from urllib.parse import urlparse
 
-from etl.contracts.nyc_hvfhs_identity import (
-    business_trip_key,
-    required_identity_columns,
-    row_id,
-)
-
-NYC_TLC_TRIP_DATA_BASE_URI = "https://d37ci6vzurychx.cloudfront.net/trip-data"
-NYC_TLC_TAXI_ZONE_URI = (
-    "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
-)
-DEFAULT_SOURCE_YEAR = 2024
-DEFAULT_SOURCE_MONTH = 1
+from etl.contracts.nyc_hvfhs_identity import required_identity_columns
 
 _MONTH_PATTERN = re.compile(r"^20\d{2}$")
 
@@ -82,11 +71,6 @@ def monthly_trip_filename(year: int, month: int) -> str:
     return f"fhvhv_tripdata_{year}-{month:02d}.parquet"
 
 
-def monthly_trip_uri(year: int, month: int) -> str:
-    """Return the official TLC monthly HVFHV URI without downloading it."""
-    return f"{NYC_TLC_TRIP_DATA_BASE_URI}/{monthly_trip_filename(year, month)}"
-
-
 def validate_landed_source(source: SourceFile) -> None:
     """Require one immutable, checksum-pinned monthly object in S3 landing."""
 
@@ -127,46 +111,6 @@ def validate_trip_schema(columns: Iterable[str], year: int) -> None:
         raise SourceContractError(
             f"Missing required HVFHV source columns: {', '.join(missing)}"
         )
-
-
-def inspect_local_source(
-    path: Path, year: int, month: int, source_uri: str | None = None
-) -> SourceFile:
-    """Calculate immutable local source identity without interpreting its contents."""
-    _validate_year_month(year, month)
-    if not path.is_file():
-        raise SourceContractError(f"Source file does not exist: {path}")
-
-    digest = sha256()
-    with path.open("rb") as source_file:
-        for chunk in iter(lambda: source_file.read(1024 * 1024), b""):
-            digest.update(chunk)
-
-    return SourceFile(
-        source_year=year,
-        source_month=month,
-        source_uri=source_uri or path.resolve().as_uri(),
-        source_checksum=digest.hexdigest(),
-        source_size_bytes=path.stat().st_size,
-    )
-
-
-def canonical_row_id(record: Mapping[str, object], year: int) -> str:
-    """Produce the policy-versioned exact-row identity."""
-
-    try:
-        return row_id(record, year)
-    except ValueError as error:
-        raise SourceContractError(str(error)) from error
-
-
-def canonical_business_trip_key(record: Mapping[str, object]) -> str:
-    """Produce the probable-trip analytical key; never use it for deduplication."""
-
-    try:
-        return business_trip_key(record)
-    except ValueError as error:
-        raise SourceContractError(str(error)) from error
 
 
 def stable_run_id(source: SourceFile) -> str:

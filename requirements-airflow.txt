@@ -5,6 +5,5 @@ apache-airflow==3.2.1
 apache-airflow-providers-amazon
 apache-airflow-providers-standard
 
-# One in-process Gold build; Airflow intentionally sees it as one stage.
-dbt-core==1.10.19
-dbt-redshift==1.10.2
+# Cosmos Watcher runs one dbt build while retaining model/test visibility.
+astronomer-cosmos==1.15.0
