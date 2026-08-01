@@ -87,25 +87,14 @@ def main() -> None:
             .select(col("LocationID").cast("int").alias("zone_id"))
             .distinct()
         )
-        other_ids = (
-            spark.table(SILVER_TRIPS_TABLE)
-            .filter(~((col("source_year") == year) & (col("source_month") == month)))
-            .select("row_id")
-            .distinct()
-            .withColumn("_already_published", lit(True))
-        )
-        joined = (
-            trips.join(
-                zones.withColumnRenamed("zone_id", "pickup_zone_id"),
-                col("PULocationID") == col("pickup_zone_id"),
-                "left",
-            )
-            .join(
-                zones.withColumnRenamed("zone_id", "dropoff_zone_id"),
-                col("DOLocationID") == col("dropoff_zone_id"),
-                "left",
-            )
-            .join(other_ids, "row_id", "left")
+        joined = trips.join(
+            zones.withColumnRenamed("zone_id", "pickup_zone_id"),
+            col("PULocationID") == col("pickup_zone_id"),
+            "left",
+        ).join(
+            zones.withColumnRenamed("zone_id", "dropoff_zone_id"),
+            col("DOLocationID") == col("dropoff_zone_id"),
+            "left",
         )
         reasoned = joined.withColumn("reason_code", spark_reason_expression())
         numbered = reasoned.withColumn(
@@ -119,17 +108,13 @@ def main() -> None:
         classified = numbered.withColumn(
             "reason_code",
             when(
-                col("reason_code").isNull()
-                & (
-                    (col("_trip_row_number") > 1)
-                    | col("_already_published").isNotNull()
-                ),
+                col("reason_code").isNull() & (col("_trip_row_number") > 1),
                 "DUPLICATE_ROW_ID",
             ).otherwise(col("reason_code")),
         )
         classified.persist(StorageLevel.MEMORY_AND_DISK)
         quarantine = classified.filter(col("reason_code").isNotNull()).drop(
-            "_trip_row_number", "_already_published"
+            "_trip_row_number"
         )
         silver_columns = [
             "row_id",

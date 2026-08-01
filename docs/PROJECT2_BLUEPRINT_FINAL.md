@@ -29,7 +29,7 @@ Upstream producer
 | Control plane | regular MWAA | Ordering, retry, rerun, backfill, task evidence |
 | Batch compute | EMR Serverless | Bronze and Silver/quarantine Spark work |
 | Open storage | S3 + Iceberg | ACID Bronze, Silver, quarantine, operational state |
-| Shared metadata | Glue Data Catalog | One catalog for EMR, Athena, and Spectrum |
+| Shared metadata | Glue Data Catalog | Metadata only; one catalog shared by EMR and Spectrum |
 | Gold transform | one dbt-redshift build | Six tested managed Redshift relations |
 | Serving | Redshift Serverless | SQL contract for analytics consumers |
 | Release | S3 publication JSON | Durable source/count/snapshot/dbt evidence |
@@ -123,10 +123,10 @@ is intentionally not a generic framework.
 
 ## Publication and verification
 
-Reconciliation reads three open-layer counts and the operational snapshot IDs
-through Athena, then reads the Gold fact count through Redshift Data API.
-Publication uses that evidence directly; it does not query "latest snapshot"
-again.
+Reconciliation uses one Redshift Data API statement to read three open-layer
+counts and operational snapshot IDs through Spectrum plus the managed Gold
+fact count. Publication uses that evidence directly; it does not query
+"latest snapshot" again.
 
 The publication JSON records source identity, policy, three table/snapshot/count
 triples, six Gold relation names, the dbt artifact URI/SHA-256, and
@@ -137,16 +137,15 @@ release.
 Verification is intentionally small:
 
 1. read publication and verify its SHA-256 and identity;
-2. read one month-scoped Silver count through Athena;
-3. read one month-scoped Gold fact count through Redshift;
-4. compare both with the published counts.
+2. use one Redshift statement to read a month-scoped Silver external count and
+   Gold managed count;
+3. compare both with the published counts.
 
 ## Deployment boundary
 
 Terraform defines one private regular MWAA environment, one auto-stopping EMR
 Serverless application, one Redshift Serverless namespace/workgroup, one
-private S3 bucket, three Glue namespaces, IAM boundaries, and one bounded
-Athena workgroup.
+private S3 bucket, three Glue Data Catalog namespaces, and IAM boundaries.
 
 Regular MWAA is provisioned and does not scale to zero. `mw1.small`, two maximum
 workers, and the separately approved teardown plan bound the baseline cost.
@@ -156,13 +155,13 @@ egress needed by MWAA.
 ## Deliberate exclusions
 
 No producer uploader, Lambda/EventBridge trigger, Cosmos, EC2 Airflow runner,
-MWAA Serverless, EKS, Glue ETL job, Lake Formation, dashboard, streaming
-system, lineage platform, generic dataset framework, or Iceberg maintenance
-suite is part of the baseline.
+MWAA Serverless, EKS, Glue ETL job, second query engine, Lake Formation,
+dashboard, streaming system, lineage platform, generic dataset framework, or
+Iceberg maintenance suite is part of the baseline.
 
 The sole post-baseline semantic is adding nullable `cbd_congestion_fee` for
 2025, ingesting a new snapshot, and querying the retained 2024 snapshot with
-Athena version travel.
+one bounded EMR Serverless Spark verification job.
 
 `CODEBASE-READY` requires all credential-independent checks to pass.
 `DEPLOYMENT-VERIFIED` remains **NOT VERIFIED** until a real bounded AWS run

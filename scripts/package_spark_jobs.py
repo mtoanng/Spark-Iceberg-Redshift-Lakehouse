@@ -19,11 +19,10 @@ RUNTIME_DEPENDENCIES: dict[str, str] = {}
 
 
 def _files() -> list[Path]:
-    return sorted(
-        path
-        for path in (ROOT / "etl").rglob("*.py")
-        if "dags" not in path.parts and "__pycache__" not in path.parts
-    )
+    files = [ROOT / "etl" / "__init__.py"]
+    for directory in ("contracts", "iceberg", "sources", "spark_jobs"):
+        files.extend((ROOT / "etl" / directory).glob("*.py"))
+    return sorted(path for path in files if path.is_file())
 
 
 def build(output: Path) -> dict[str, object]:
@@ -36,6 +35,7 @@ def build(output: Path) -> dict[str, object]:
             "etl/spark_jobs/apply_nyc_2025_schema_evolution.py",
             "etl/spark_jobs/nyc_bronze_ingestion.py",
             "etl/spark_jobs/nyc_silver_transform.py",
+            "etl/spark_jobs/verify_nyc_snapshot.py",
         ],
         "dependencies": RUNTIME_DEPENDENCIES,
         "catalog": "glue_catalog",

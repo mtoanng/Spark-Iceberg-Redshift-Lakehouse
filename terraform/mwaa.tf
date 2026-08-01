@@ -1,17 +1,24 @@
 locals {
   mwaa_environment_name = "${var.project_name}-${var.environment}"
-  mwaa_etl_files = toset([
+  mwaa_python_files = toset([
     for path in setunion(
-      fileset("${path.module}/../etl", "**/*.py"),
+      fileset("${path.module}/../etl", "__init__.py"),
+      fileset("${path.module}/../etl", "dags/*.py"),
+      fileset("${path.module}/../etl", "contracts/*.py"),
+      fileset("${path.module}/../etl", "orchestration/*.py"),
+      fileset("${path.module}/../etl", "publication/*.py"),
+      fileset("${path.module}/../etl", "sources/*.py")
+    ) : "etl/${path}"
+  ])
+  mwaa_dbt_files = toset([
+    for path in setunion(
       fileset("${path.module}/../etl/dbt_project", "**/*.sql"),
       fileset("${path.module}/../etl/dbt_project", "**/*.yml"),
       fileset("${path.module}/../etl/dbt_project", "**/*.yaml")
-    ) : "etl/${path}"
+    ) : "etl/dbt_project/${path}"
+    if !startswith(path, "target/") && path != ".user.yml"
   ])
-  mwaa_athena_files = toset([
-    for path in fileset("${path.module}/../athena", "**/*.py") : "athena/${path}"
-  ])
-  mwaa_source_files = setunion(local.mwaa_etl_files, local.mwaa_athena_files)
+  mwaa_source_files = setunion(local.mwaa_python_files, local.mwaa_dbt_files)
 }
 
 resource "aws_s3_object" "mwaa_source" {
@@ -28,13 +35,9 @@ resource "aws_s3_object" "mwaa_airflowignore" {
   key    = "${var.mwaa_dag_s3_prefix}/.airflowignore"
   content = join("\n", [
     "etl/contracts/*",
-    "etl/iceberg/*",
     "etl/orchestration/*",
     "etl/publication/*",
     "etl/sources/*",
-    "etl/spark_jobs/*",
-    "etl/transforms/*",
-    "athena/*",
     ""
   ])
   content_type = "text/plain"
@@ -82,7 +85,7 @@ resource "aws_mwaa_environment" "orchestration" {
   min_workers                    = 1
   max_workers                    = var.mwaa_max_workers
   schedulers                     = 2
-  webserver_access_mode          = "PRIVATE_ONLY"
+  webserver_access_mode          = "PUBLIC_AND_PRIVATE"
   endpoint_management            = "SERVICE"
 
   airflow_configuration_options = {
@@ -120,7 +123,6 @@ resource "aws_mwaa_environment" "orchestration" {
   depends_on = [
     aws_iam_role_policy.mwaa_platform,
     aws_iam_role_policy.mwaa_pipeline,
-    aws_iam_role_policy.athena_iceberg_verify,
     aws_s3_bucket_versioning.lakehouse,
     aws_s3_object.mwaa_source,
   ]

@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -95,7 +95,7 @@ output "mwaa_environment_name" {
 
 output "mwaa_webserver_url" {
   value       = aws_mwaa_environment.orchestration.webserver_url
-  description = "Private regular MWAA webserver URL."
+  description = "IAM-protected regular MWAA webserver URL."
 }
 
 output "publication_prefix_uri" {
@@ -114,7 +114,6 @@ output "airflow_variables" {
     nyc_spark_package_uri                 = "s3://${aws_s3_bucket.lakehouse.id}/${var.spark_package_s3_key}"
     nyc_emr_serverless_log_uri            = "s3://${aws_s3_bucket.lakehouse.id}/emr-serverless-logs"
     nyc_warehouse_uri                     = "s3://${aws_s3_bucket.lakehouse.id}/${var.warehouse_prefix}"
-    athena_workgroup                      = aws_athena_workgroup.iceberg_verify.name
     nyc_publication_prefix_uri            = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
     redshift_host                         = aws_redshiftserverless_workgroup.gold.endpoint[0].address
     redshift_database                     = aws_redshiftserverless_namespace.gold.db_name

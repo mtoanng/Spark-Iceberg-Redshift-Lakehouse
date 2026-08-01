@@ -25,18 +25,15 @@ def _absent(error: Exception) -> bool:
 
 def verify(
     bucket: str,
-    workgroup: str,
     *,
     project_name: str,
     environment: str,
     region: str,
-    athena_results_prefix: str = "athena-results",
     clients: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     clients = clients or {
         service: boto3.client(service, region_name=region)
         for service in (
-            "athena",
             "emr-serverless",
             "glue",
             "iam",
@@ -54,19 +51,10 @@ def verify(
     except clients["s3"].exceptions.ClientError as error:
         result["canonical_bucket"] = "ABSENT" if _absent(error) else "UNKNOWN"
 
-    temporary_prefixes = {}
-    for key in ("tmp/", f"{athena_results_prefix.strip('/')}/"):
-        objects = clients["s3"].list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
-        temporary_prefixes[key] = (
-            "EMPTY" if objects.get("KeyCount", 0) == 0 else "PRESENT"
-        )
-    result["temporary_prefixes"] = temporary_prefixes
-
-    try:
-        clients["athena"].get_work_group(WorkGroup=workgroup)
-        result["athena_workgroup"] = "PRESENT"
-    except clients["athena"].exceptions.ClientError as error:
-        result["athena_workgroup"] = "ABSENT" if _absent(error) else "UNKNOWN"
+    objects = clients["s3"].list_objects_v2(Bucket=bucket, Prefix="tmp/", MaxKeys=1)
+    result["temporary_prefix"] = (
+        "EMPTY" if objects.get("KeyCount", 0) == 0 else "PRESENT"
+    )
 
     applications = clients["emr-serverless"].list_applications().get("applications", [])
     result["emr_serverless_application"] = (
@@ -112,24 +100,19 @@ def verify(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bucket", required=True)
-    parser.add_argument("--workgroup", required=True)
     parser.add_argument("--project-name", default="nyc-hvfhs-lakehouse")
     parser.add_argument("--environment", default="dev")
     parser.add_argument("--region", default="us-east-1")
-    parser.add_argument("--athena-results-prefix", default="athena-results")
     args = parser.parse_args()
     result = verify(
         args.bucket,
-        args.workgroup,
         project_name=args.project_name,
         environment=args.environment,
         region=args.region,
-        athena_results_prefix=args.athena_results_prefix,
     )
     print(json.dumps(result, indent=2, sort_keys=True))
 
     expected_absent = [
-        result["athena_workgroup"],
         result["mwaa_environment"],
         result["mwaa_role"],
         result["emr_serverless_role"],
@@ -141,7 +124,7 @@ def main() -> None:
         result["canonical_bucket"] != "PRESENT"
         or any(value != "PRESENT" for value in result["canonical_databases"].values())
         or any(value != "ABSENT" for value in expected_absent)
-        or any(value != "EMPTY" for value in result["temporary_prefixes"].values())
+        or result["temporary_prefix"] != "EMPTY"
     ):
         raise SystemExit(
             "Teardown verification did not reach the expected retained-data state."

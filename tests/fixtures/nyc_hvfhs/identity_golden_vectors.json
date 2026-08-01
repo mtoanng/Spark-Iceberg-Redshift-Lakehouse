@@ -2,7 +2,9 @@
   "base_2024": {
     "hvfhs_license_num": "HV0003",
     "dispatching_base_num": "B03404",
+    "originating_base_num": null,
     "request_datetime": "2024-01-15T08:00:00",
+    "on_scene_datetime": null,
     "pickup_datetime": "2024-01-15T08:05:00",
     "dropoff_datetime": "2024-01-15T08:25:00",
     "PULocationID": 1,
@@ -11,19 +13,25 @@
     "trip_time": 1200,
     "base_passenger_fare": 18.5,
     "tolls": 0,
+    "bcf": 0,
     "sales_tax": 0,
+    "congestion_surcharge": 0,
+    "airport_fee": 0,
     "tips": 3,
     "driver_pay": 11.5,
     "shared_request_flag": "N",
-    "shared_match_flag": "N"
+    "shared_match_flag": "N",
+    "access_a_ride_flag": "N",
+    "wav_request_flag": "N",
+    "wav_match_flag": "N"
   },
   "vectors": [
-    {"name": "normal_2024", "year": 2024, "overrides": {}, "row_id": "f03122ca859920507d65dd9ae46ee1854737cb125dd117d9176cb64c8078847c", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "nullable_optional_flag", "year": 2024, "overrides": {"shared_match_flag": null}, "row_id": "500cdfa19a9069c9ad1f2e037c987cf8bcd46e427e3fde45b79636cbaa73762e", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "zero_numeric_values", "year": 2024, "overrides": {"trip_miles": 0, "trip_time": 0, "base_passenger_fare": 0, "tips": 0, "driver_pay": 0}, "row_id": "9bcf1aac05a4cd9fb00f5a795f0dddf8bab8def1479bee08b1e29cd10609163a", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "normalized_timestamps", "year": 2024, "overrides": {"request_datetime": "2024-01-15T08:00:00.000000", "pickup_datetime": "2024-01-15T08:05:00Z", "dropoff_datetime": "2024-01-15T08:25:00+00:00"}, "row_id": "f03122ca859920507d65dd9ae46ee1854737cb125dd117d9176cb64c8078847c", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "corrected_tips", "year": 2024, "overrides": {"tips": 4}, "row_id": "7ae90442e575f98fa48e6765b9c1372fdd96492fce9825d6065dd075ce8f1132", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "corrected_shared_flag", "year": 2024, "overrides": {"shared_match_flag": "Y"}, "row_id": "2229c2716f1c14e6f8190c2a544859722113fec14f82b9a9c2e4bc0308e88997", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
-    {"name": "normal_2025", "year": 2025, "overrides": {"request_datetime": "2025-01-15T08:00:00", "pickup_datetime": "2025-01-15T08:05:00", "dropoff_datetime": "2025-01-15T08:25:00", "cbd_congestion_fee": 0.75}, "row_id": "5e1185807376aa06aa22279dba4aee6c6743f3ef7a942eba982b1922f39f50be", "business_trip_key": "69109ea7f1e67b3d939a9da69008b109f661f69ac6aab6ec97d8e186c9e4dd98"}
+    {"name": "normal_2024", "year": 2024, "overrides": {}, "row_id": "46645481a2549bd9e431be72c3260f86439eaad7ceea1307b9ce09cc1127cc7d", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "nullable_optional_flag", "year": 2024, "overrides": {"shared_match_flag": null}, "row_id": "2b32327b830e7ff9da22785c872ae273e90cfae41ef90ac80028c5cec42dbea4", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "zero_numeric_values", "year": 2024, "overrides": {"trip_miles": 0, "trip_time": 0, "base_passenger_fare": 0, "tips": 0, "driver_pay": 0}, "row_id": "08a5b4271dd9e85ae1beca81d172f4d6c15c1b55360648537bf60f812d62b6f6", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "normalized_timestamps", "year": 2024, "overrides": {"request_datetime": "2024-01-15T08:00:00.000000", "pickup_datetime": "2024-01-15T08:05:00Z", "dropoff_datetime": "2024-01-15T08:25:00+00:00"}, "row_id": "46645481a2549bd9e431be72c3260f86439eaad7ceea1307b9ce09cc1127cc7d", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "corrected_tips", "year": 2024, "overrides": {"tips": 4}, "row_id": "d7444d3f44710b154bb007bc1a1a79f594ecdba459d04a14555c3307943ec0ad", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "corrected_shared_flag", "year": 2024, "overrides": {"shared_match_flag": "Y"}, "row_id": "92b75679be1888e439098bd86cc80046f7c278dd7ff65234326ae63f456e4199", "business_trip_key": "e18001bc7a6c97f2cd3912c8f9b8caa3536eaa8a81589b7f2bc59fd1c6389d46"},
+    {"name": "normal_2025", "year": 2025, "overrides": {"request_datetime": "2025-01-15T08:00:00", "pickup_datetime": "2025-01-15T08:05:00", "dropoff_datetime": "2025-01-15T08:25:00", "cbd_congestion_fee": 0.75}, "row_id": "b8afdfb5293a4632f603ca04f2002ec0a74ea5f3eade7d75e8d2d67c1473410d", "business_trip_key": "69109ea7f1e67b3d939a9da69008b109f661f69ac6aab6ec97d8e186c9e4dd98"}
   ]
 }

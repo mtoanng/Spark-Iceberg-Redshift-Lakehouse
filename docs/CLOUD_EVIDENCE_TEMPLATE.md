@@ -25,8 +25,7 @@ Status: **NOT VERIFIED** until populated from one retained AWS run.
 - Six Gold relations present: PASS / FAIL
 - Gold fact count:
 - `Silver = Gold`: PASS / FAIL
-- Athena query IDs:
-- Redshift statement ID:
+- Redshift reconciliation statement ID:
 - Publication URI / SHA-256:
 - Read-after-publish verification: PASS / FAIL
 

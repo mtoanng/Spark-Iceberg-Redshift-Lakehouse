@@ -49,28 +49,6 @@ variable "warehouse_prefix" {
   default     = "warehouse"
 }
 
-variable "athena_results_prefix" {
-  type        = string
-  description = "Prefix in the existing project bucket for Athena query results."
-  default     = "athena-results"
-
-  validation {
-    condition     = can(regex("^[a-zA-Z0-9!_.*'()=-]+(/[a-zA-Z0-9!_.*'()=-]+)*$", var.athena_results_prefix))
-    error_message = "athena_results_prefix must be a safe, relative S3 prefix."
-  }
-}
-
-variable "athena_bytes_scanned_cutoff" {
-  type        = number
-  description = "Maximum bytes Athena may scan per query; Athena requires at least 10 MiB."
-  default     = 104857600
-
-  validation {
-    condition     = var.athena_bytes_scanned_cutoff >= 10485760
-    error_message = "athena_bytes_scanned_cutoff must be at least 10485760 bytes (10 MiB)."
-  }
-}
-
 variable "spark_package_path" {
   type        = string
   description = "Repository-root-relative deterministic PySpark zip produced before deployment."

@@ -15,6 +15,9 @@ upstream-owned S3 landing
 -> reconciliation -> publication -> bounded verification
 ```
 
+Glue Data Catalog stores metadata only; all open-layer and Gold SQL reads use
+Redshift Serverless/Spectrum. EMR Serverless is the sole Spark compute path.
+
 The repository deliberately starts at the S3 landing contract. It does not
 download or upload the producer's data. The upstream producer must land:
 
@@ -59,8 +62,8 @@ relations are the consumer contract.
 ## Local verification
 
 ```powershell
-venv\Scripts\python.exe -m black --check athena etl scripts tests
-venv\Scripts\python.exe -m compileall -q athena etl scripts tests
+venv\Scripts\python.exe -m black --check etl scripts tests
+venv\Scripts\python.exe -m compileall -q etl scripts tests
 venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit tests/contract -q
 venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 
@@ -77,9 +80,12 @@ terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform validate
 ```
 
+Deployment must use a dedicated NYC Terraform state. A first-deployment plan
+must contain no destroy actions; see the runbook preflight before applying.
+
 See [the blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md), [runtime
 semantics](docs/SEMANTICS.md), and [deployment/runbook](docs/RUNBOOK.md).
 
 No AWS execution is claimed by repository tests. MWAA, S3, EMR Serverless,
-Iceberg commits, Redshift Serverless, Athena, rerun, schema evolution, and
+Iceberg commits, Redshift Serverless/Spectrum, rerun, schema evolution, and
 teardown remain **NOT VERIFIED** until a retained bounded AWS run exists.

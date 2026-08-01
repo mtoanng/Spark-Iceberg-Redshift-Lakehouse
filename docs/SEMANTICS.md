@@ -82,6 +82,6 @@ managed by Redshift.
 
 The only allowed post-baseline change is nullable `cbd_congestion_fee` in 2025
 Bronze, Silver, and quarantine. Apply the explicit evolution script, ingest a
-2025 month, and verify the old 2024 snapshot through Athena version travel.
-Compaction, snapshot expiration, orphan cleanup, and partition evolution are
-out of scope.
+2025 month, then run `verify_nyc_snapshot.py` on EMR Serverless against the
+retained 2024 snapshot. Compaction, snapshot expiration, orphan cleanup, and
+partition evolution are out of scope.

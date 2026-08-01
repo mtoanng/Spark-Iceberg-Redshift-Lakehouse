@@ -182,7 +182,7 @@ resource "aws_iam_role_policy" "mwaa_pipeline" {
         ]
       },
       {
-        Sid      = "UseRedshiftDataApiForGoldVerification"
+        Sid      = "UseRedshiftDataApiQueryPlane"
         Effect   = "Allow"
         Action   = ["redshift-data:DescribeStatement", "redshift-data:ExecuteStatement", "redshift-data:GetStatementResult"]
         Resource = "*"
@@ -225,83 +225,6 @@ resource "aws_iam_role_policy" "mwaa_pipeline" {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:PutObject"]
         Resource = "${aws_s3_bucket.lakehouse.arn}/manifests/*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "athena_iceberg_verify" {
-  name = "${var.project_name}-${var.environment}-athena-iceberg-verify"
-  role = aws_iam_role.mwaa_execution.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AthenaOneWorkgroup"
-        Effect = "Allow"
-        Action = [
-          "athena:StartQueryExecution",
-          "athena:GetQueryExecution",
-          "athena:GetQueryResults",
-          "athena:StopQueryExecution",
-          "athena:GetWorkGroup"
-        ]
-        Resource = aws_athena_workgroup.iceberg_verify.arn
-      },
-      {
-        Sid    = "ReadIcebergGlueMetadata"
-        Effect = "Allow"
-        Action = [
-          "glue:GetDatabase",
-          "glue:GetDatabases",
-          "glue:GetTable",
-          "glue:GetTables",
-          "glue:GetTableVersion",
-          "glue:GetTableVersions",
-          "glue:GetPartitions"
-        ]
-        Resource = [
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/bronze",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/silver",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/ops",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/bronze/*",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/silver/*",
-          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/ops/*"
-        ]
-      },
-      {
-        Sid      = "ListIcebergAndResultsPrefixes"
-        Effect   = "Allow"
-        Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
-        Resource = aws_s3_bucket.lakehouse.arn
-        Condition = {
-          StringLike = {
-            "s3:prefix" = [
-              "${var.warehouse_prefix}/bronze/*",
-              "${var.warehouse_prefix}/silver/*",
-              "${var.warehouse_prefix}/ops/*",
-              "${var.athena_results_prefix}/*"
-            ]
-          }
-        }
-      },
-      {
-        Sid    = "ReadOpenIcebergObjects"
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
-        Resource = [
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/bronze/*",
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*",
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/ops/*"
-        ]
-      },
-      {
-        Sid      = "ReadWriteAthenaResultsOnly"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"]
-        Resource = "${aws_s3_bucket.lakehouse.arn}/${var.athena_results_prefix}/*"
       }
     ]
   })

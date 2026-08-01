@@ -2,6 +2,7 @@
 boto3==1.43.53
 pytest==8.4.2
 PyYAML==6.0.3
+pyspark==3.4.1
 black==25.12.0
 flake8==7.3.0
 dbt-core==1.10.19

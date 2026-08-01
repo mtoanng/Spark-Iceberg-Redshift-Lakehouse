@@ -11,7 +11,6 @@ ROOT = Path(__file__).parents[2]
 def _active_text() -> str:
     paths = [
         ROOT / "etl",
-        ROOT / "athena",
         ROOT / "terraform",
         ROOT / ".github",
         ROOT / "requirements-airflow.txt",

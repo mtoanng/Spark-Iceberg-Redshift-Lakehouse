@@ -24,7 +24,15 @@ def test_spark_package_is_deterministic_and_contains_runtime_contract(
         manifest = json.loads(archive.read("spark_runtime_manifest.json"))
         assert "etl/iceberg/catalog.py" in archive.namelist()
         assert "etl/spark_jobs/nyc_bronze_ingestion.py" in archive.namelist()
+        assert "etl/spark_jobs/verify_nyc_snapshot.py" in archive.namelist()
+        assert "etl/orchestration/nyc_hvfhs_dbt.py" not in archive.namelist()
+        assert "etl/transforms/nyc_hvfhs.py" not in archive.namelist()
         assert manifest["namespaces"] == ["bronze", "silver", "ops"]
+    snapshot_job = (ROOT / "etl" / "spark_jobs" / "verify_nyc_snapshot.py").read_text(
+        encoding="utf-8"
+    )
+    assert "VERSION AS OF" in snapshot_job
+    assert "SNAPSHOT_ID" in snapshot_job
 
 
 def test_terraform_is_nyc_only_and_uses_mwaa_and_package_contract() -> None:
@@ -33,11 +41,22 @@ def test_terraform_is_nyc_only_and_uses_mwaa_and_package_contract() -> None:
     )
     assert "instacart" not in terraform.lower()
     assert 'resource "aws_mwaa_environment"' in terraform
-    assert '"PRIVATE_ONLY"' in terraform
+    assert '"PUBLIC_AND_PRIVATE"' in terraform
     assert "aws_iam_instance_profile" not in terraform
     assert 'resource "aws_instance"' not in terraform
     assert "aws_emrserverless_application" in terraform
-    assert "--py-files" in terraform
+    dag = (ROOT / "etl" / "dags" / "nyc_hvfhs_monthly_dag.py").read_text(
+        encoding="utf-8"
+    )
+    assert "--py-files" in dag
+    assert "spark.jars=/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar" in dag
+    assert "spark.driver.cores=1" in dag
+    assert "spark.executor.cores=1" in dag
+    assert "spark.dynamicAllocation.maxExecutors=3" in dag
+    assert 'disk   = "80 GB"' in terraform
+    assert '"etl/dbt_project/${path}"' in terraform
+    assert '!startswith(path, "target/")' in terraform
+    assert 'path != ".user.yml"' in terraform
     assert 'aws_glue_catalog_database" "namespace' in terraform
     assert terraform.count('resource "aws_redshiftserverless_namespace"') == 1
     assert terraform.count('resource "aws_redshiftserverless_workgroup"') == 1
@@ -46,11 +65,14 @@ def test_terraform_is_nyc_only_and_uses_mwaa_and_package_contract() -> None:
     assert "default_iam_role_arn" in terraform
     assert "warehouse_prefix}/bronze/*" in terraform
     assert "warehouse_prefix}/silver/*" in terraform
+    assert "warehouse_prefix}/ops/*" in terraform
     assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS bronze_external" in terraform
     assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS silver_external" in terraform
+    assert "CREATE EXTERNAL SCHEMA IF NOT EXISTS ops_external" in terraform
     assert "CREATE SCHEMA IF NOT EXISTS gold" in terraform
     assert "nyc_great_expectations_checkpoint.py" not in terraform
     assert "nyc_quality_checkpoint.py" not in terraform
+    assert not (ROOT / "glue-user-policy.json").exists()
     assert "nyc_publish_manifest.py" not in terraform
 
 
@@ -64,7 +86,6 @@ def test_cloud_environment_has_no_static_key_contract() -> None:
     env = (ROOT / ".env.cloud.example").read_text(encoding="utf-8")
     assert "AWS_ACCESS_KEY_ID" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
-    assert "ATHENA_WORKGROUP" in env
     assert "AIRFLOW_VAR_NYC_EMR_SERVERLESS_APPLICATION_ID" in env
     assert "AIRFLOW_VAR_REDSHIFT_WORKGROUP_NAME" in env
 

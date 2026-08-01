@@ -12,7 +12,7 @@ resource "aws_iam_role" "redshift_spectrum" {
 }
 
 resource "aws_iam_role_policy" "redshift_spectrum" {
-  name = "${var.project_name}-${var.environment}-bronze-silver-read"
+  name = "${var.project_name}-${var.environment}-open-layers-read"
   role = aws_iam_role.redshift_spectrum.id
 
   policy = jsonencode({
@@ -27,18 +27,20 @@ resource "aws_iam_role_policy" "redshift_spectrum" {
           StringLike = {
             "s3:prefix" = [
               "${var.warehouse_prefix}/bronze/*",
-              "${var.warehouse_prefix}/silver/*"
+              "${var.warehouse_prefix}/silver/*",
+              "${var.warehouse_prefix}/ops/*"
             ]
           }
         }
       },
       {
-        Sid    = "ReadBronzeSilverIceberg"
+        Sid    = "ReadOpenIcebergLayers"
         Effect = "Allow"
         Action = ["s3:GetObject"]
         Resource = [
           "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/bronze/*",
-          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*"
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/silver/*",
+          "${aws_s3_bucket.lakehouse.arn}/${var.warehouse_prefix}/ops/*"
         ]
       },
       {
@@ -117,6 +119,14 @@ resource "aws_redshiftdata_statement" "silver_external_schema" {
   sql            = "CREATE EXTERNAL SCHEMA IF NOT EXISTS silver_external FROM DATA CATALOG DATABASE 'silver' IAM_ROLE default REGION '${var.aws_region}'"
 }
 
+resource "aws_redshiftdata_statement" "ops_external_schema" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "create-ops-external-schema"
+  sql            = "CREATE EXTERNAL SCHEMA IF NOT EXISTS ops_external FROM DATA CATALOG DATABASE 'ops' IAM_ROLE default REGION '${var.aws_region}'"
+}
+
 resource "aws_redshiftdata_statement" "gold_schema" {
   workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
   database       = aws_redshiftserverless_namespace.gold.db_name
@@ -161,6 +171,19 @@ resource "aws_redshiftdata_statement" "mwaa_silver_usage" {
 
   depends_on = [
     aws_redshiftdata_statement.silver_external_schema,
+    aws_redshiftdata_statement.mwaa_database_user,
+  ]
+}
+
+resource "aws_redshiftdata_statement" "mwaa_ops_usage" {
+  workgroup_name = aws_redshiftserverless_workgroup.gold.workgroup_name
+  database       = aws_redshiftserverless_namespace.gold.db_name
+  secret_arn     = aws_redshiftserverless_namespace.gold.admin_password_secret_arn
+  statement_name = "grant-mwaa-ops-usage"
+  sql            = "GRANT USAGE ON SCHEMA ops_external TO \"${local.mwaa_redshift_user}\""
+
+  depends_on = [
+    aws_redshiftdata_statement.ops_external_schema,
     aws_redshiftdata_statement.mwaa_database_user,
   ]
 }

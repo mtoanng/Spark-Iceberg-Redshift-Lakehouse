@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Mapping
 
 
@@ -45,9 +46,10 @@ def _as_datetime(value: object) -> datetime | None:
 
 def _as_float(value: object) -> float | None:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def reason_code(row: Mapping[str, object], zone_ids: set[int]) -> str | None:
@@ -84,7 +86,7 @@ def reason_code(row: Mapping[str, object], zone_ids: set[int]) -> str | None:
 def spark_reason_expression():
     """Build the Spark expression in exactly the same priority order."""
 
-    from pyspark.sql.functions import col, when
+    from pyspark.sql.functions import col, isnan, when
 
     expression = when(
         col("request_datetime").isNull()
@@ -104,16 +106,21 @@ def spark_reason_expression():
         .when(col("pickup_zone_id").isNull(), "UNKNOWN_PICKUP_ZONE")
         .when(col("dropoff_zone_id").isNull(), "UNKNOWN_DROPOFF_ZONE")
     )
-    expression = expression.when(
-        col("trip_miles").cast("double").isNull()
-        | col("trip_time").cast("double").isNull()
-        | col("base_passenger_fare").cast("double").isNull()
-        | col("tolls").cast("double").isNull()
-        | col("sales_tax").cast("double").isNull()
-        | col("tips").cast("double").isNull()
-        | col("driver_pay").cast("double").isNull(),
-        "MISSING_OR_INVALID_NUMERIC",
-    )
+    invalid_numeric = None
+    for column, _ in NUMERIC_REASON_COLUMNS:
+        value = col(column).cast("double")
+        invalid_value = (
+            value.isNull()
+            | isnan(value)
+            | (value == float("inf"))
+            | (value == float("-inf"))
+        )
+        invalid_numeric = (
+            invalid_value
+            if invalid_numeric is None
+            else invalid_numeric | invalid_value
+        )
+    expression = expression.when(invalid_numeric, "MISSING_OR_INVALID_NUMERIC")
     for column, code in NUMERIC_REASON_COLUMNS:
         expression = expression.when(col(column).cast("double") < 0, code)
     return expression

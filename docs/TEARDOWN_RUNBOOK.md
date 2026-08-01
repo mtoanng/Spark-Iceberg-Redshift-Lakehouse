@@ -13,7 +13,6 @@ The targets remove cost-bearing control/compute/serving resources:
 
 - regular MWAA and its execution role;
 - EMR Serverless and its execution role;
-- Athena workgroup;
 - Redshift Serverless and Spectrum role;
 - their security groups and inline policies.
 
@@ -32,9 +31,8 @@ Then run the read-only verifier:
 
 ```powershell
 venv\Scripts\python.exe scripts/verify_teardown.py `
-  --bucket <bucket> `
-  --workgroup <athena-workgroup>
+  --bucket <bucket>
 ```
 
-Pass means canonical S3/Glue data remains, temporary result prefixes are empty,
-and MWAA/EMR/Athena/Redshift/IAM compute resources are absent.
+Pass means canonical S3/Glue data remains, the temporary prefix is empty, and
+MWAA/EMR/Redshift/IAM compute resources are absent.

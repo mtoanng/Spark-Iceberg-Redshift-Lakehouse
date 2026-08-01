@@ -109,7 +109,6 @@ def logical_document(document: Mapping[str, object]) -> dict[str, object]:
     result.pop("publication_timestamp", None)
     reconciliation = dict(result.get("reconciliation", {}))
     for field in (
-        "athena_query_execution_ids",
         "redshift_statement_id",
         "reconciled_at",
     ):

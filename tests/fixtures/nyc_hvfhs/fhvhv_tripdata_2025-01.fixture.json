@@ -5,7 +5,9 @@
     {
       "hvfhs_license_num": "HV0003",
       "dispatching_base_num": "B03404",
+      "originating_base_num": null,
       "request_datetime": "2025-01-15T08:00:00",
+      "on_scene_datetime": null,
       "pickup_datetime": "2025-01-15T08:05:00",
       "dropoff_datetime": "2025-01-15T08:25:00",
       "PULocationID": 1,
@@ -14,11 +16,17 @@
       "trip_time": 1200,
       "base_passenger_fare": 18.5,
       "tolls": 0.0,
+      "bcf": 0.0,
       "sales_tax": 0.0,
+      "congestion_surcharge": 0.0,
+      "airport_fee": 0.0,
       "tips": 3.0,
       "driver_pay": 11.5,
       "shared_request_flag": "N",
       "shared_match_flag": "N",
+      "access_a_ride_flag": "N",
+      "wav_request_flag": "N",
+      "wav_match_flag": "N",
       "cbd_congestion_fee": 0.75
     }
   ]

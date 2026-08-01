@@ -60,6 +60,13 @@ def _emr_spark_job(script_name: str, arguments: list[str]) -> dict[str, object]:
                 "entryPointArguments": arguments,
                 "sparkSubmitParameters": (
                     f"--py-files {EMR_PACKAGE_URI} "
+                    "--conf spark.jars=/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar "
+                    "--conf spark.driver.cores=1 "
+                    "--conf spark.driver.memory=3g "
+                    "--conf spark.executor.cores=1 "
+                    "--conf spark.executor.memory=3g "
+                    "--conf spark.dynamicAllocation.initialExecutors=1 "
+                    "--conf spark.dynamicAllocation.maxExecutors=3 "
                     "--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
                     "--conf spark.sql.defaultCatalog=glue_catalog "
                     "--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
@@ -230,7 +237,6 @@ with DAG(
             "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
             "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
             "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "athena_workgroup": "{{ var.value.athena_workgroup }}",
             "redshift_database": "{{ var.value.redshift_database }}",
             "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
         },
@@ -256,7 +262,6 @@ with DAG(
             "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
             "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
             "publication": "{{ ti.xcom_pull(task_ids='publication_manifest') }}",
-            "athena_workgroup": "{{ var.value.athena_workgroup }}",
             "redshift_database": "{{ var.value.redshift_database }}",
             "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
         },

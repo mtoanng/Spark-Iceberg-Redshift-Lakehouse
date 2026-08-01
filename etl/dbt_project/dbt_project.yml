@@ -8,14 +8,8 @@ vars:
   source_year: 2024
   source_month: 1
 
-# Directories
 model-paths: ["models_nyc"]
-analysis-paths: ["analyses"]
 test-paths: ["tests"]
-seed-paths: ["seeds"]
-macro-paths: ["macros"]
-snapshot-paths: ["snapshots"]
-# Build artifacts
 target-path: "target"
 clean-targets:
   - "target"

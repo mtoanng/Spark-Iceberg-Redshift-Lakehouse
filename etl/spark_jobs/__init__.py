@@ -1,1 +1,1 @@
-"""AWS Glue Jobs for Bronze and Silver layers"""
+"""EMR Serverless Spark entrypoints for the canonical Iceberg layers."""

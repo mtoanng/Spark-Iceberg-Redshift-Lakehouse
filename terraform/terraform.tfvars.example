@@ -11,8 +11,6 @@ private_subnet_ids = [
   "subnet-private-az-b",
 ]
 
-athena_results_prefix       = "athena-results"
-athena_bytes_scanned_cutoff = 104857600
-spark_package_path          = "build/nyc_spark_jobs.zip"
-mwaa_environment_class      = "mw1.small"
-mwaa_max_workers            = 2
+spark_package_path     = "build/nyc_spark_jobs.zip"
+mwaa_environment_class = "mw1.small"
+mwaa_max_workers       = 2

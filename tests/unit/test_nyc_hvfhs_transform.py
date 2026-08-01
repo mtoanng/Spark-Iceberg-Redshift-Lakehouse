@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from etl.sources.nyc_hvfhs import SourceFile
-from etl.transforms.nyc_hvfhs import (
+from tests.helpers.nyc_hvfhs_reference import (
     bronze_records,
     load_zone_ids,
     reconcile,
@@ -86,20 +86,6 @@ def test_reconciliation_explains_every_bronze_row() -> None:
         4,
     )
     assert counts.explained
-
-
-def test_rerun_does_not_add_existing_canonical_trip() -> None:
-    bronze = _bronze()
-    zone_ids = load_zone_ids(FIXTURE_DIR / "taxi_zone_lookup.fixture.csv")
-    first_run = transform_silver(bronze.rows, zone_ids)
-    second_run = transform_silver(
-        bronze.rows,
-        zone_ids,
-        existing_row_ids={row["row_id"] for row in first_run.silver_rows},
-    )
-    assert len(first_run.silver_rows) == 1
-    assert len(second_run.silver_rows) == 0
-    assert second_run.quarantine_rows[0]["reason_code"] == "DUPLICATE_ROW_ID"
 
 
 def test_silver_validates_request_pickup_dropoff_timeline() -> None:

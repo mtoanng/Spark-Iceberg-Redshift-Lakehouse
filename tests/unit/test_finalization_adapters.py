@@ -9,31 +9,12 @@ import json
 
 import pytest
 
-from athena.query_runner import AthenaQueryResult
 from etl.orchestration.nyc_hvfhs_publication import publish_month
 from etl.orchestration.nyc_hvfhs_reconciliation import (
     ReconciliationError,
     reconcile_month,
 )
 from etl.orchestration.nyc_hvfhs_verification import verify_month
-
-
-class FakeAthenaRunner:
-    def __init__(self, rows: list[tuple[str, ...]]) -> None:
-        self.rows = iter(rows)
-        self.calls: list[tuple[str, dict[str, object]]] = []
-
-    def run(self, sql: str, **kwargs: object) -> AthenaQueryResult:
-        self.calls.append((sql, kwargs))
-        row = next(self.rows)
-        return AthenaQueryResult(
-            query_execution_id=f"athena-{len(self.calls)}",
-            columns=tuple(f"column_{index}" for index in range(len(row))),
-            rows=(row,),
-            data_scanned_bytes=1,
-            engine_execution_time_ms=1,
-            result_location="s3://bucket/athena-results/result.csv",
-        )
 
 
 class FakeRedshiftData:
@@ -51,6 +32,13 @@ class FakeRedshiftData:
 
     def get_statement_result(self, *, Id: str) -> dict[str, object]:
         return {"Records": self.by_id[Id]}
+
+
+def _redshift_record(*values: object) -> list[dict[str, object]]:
+    return [
+        {"longValue": value} if isinstance(value, int) else {"stringValue": value}
+        for value in values
+    ]
 
 
 class FakeS3:
@@ -90,7 +78,6 @@ def _reconciliation() -> dict[str, object]:
             "silver": "102",
             "quarantine": "103",
         },
-        "athena_query_execution_ids": {},
         "redshift_statement_id": "statement-1",
         "reconciled_at": "2026-01-01T00:00:00+00:00",
     }
@@ -118,34 +105,38 @@ def _seed_dbt_artifact(s3: FakeS3) -> None:
     }
 
 
-def test_reconciliation_reads_counts_and_manifest_snapshot_evidence_once() -> None:
+def test_reconciliation_reads_all_evidence_in_one_redshift_statement() -> None:
     outcome = reconcile_month(
         source_year=2024,
         source_month=1,
         ingestion_run_id="stable-run",
-        athena_workgroup="wg",
         redshift_database="lakehouse",
         redshift_workgroup_name="serverless",
-        athena_runner=FakeAthenaRunner(
+        redshift_client=FakeRedshiftData(
             [
-                ("5",),
-                ("1",),
-                ("4",),
-                ("silver_published", "5", "1", "4", "101", "102", "103"),
+                [
+                    _redshift_record(
+                        5,
+                        1,
+                        4,
+                        1,
+                        "silver_published",
+                        5,
+                        1,
+                        4,
+                        "101",
+                        "102",
+                        "103",
+                    )
+                ]
             ]
         ),
-        redshift_client=FakeRedshiftData([[[{"longValue": 1}]]]),
         now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     assert outcome["bronze_equals_classified"] is True
     assert outcome["silver_equals_gold"] is True
     assert outcome["iceberg_snapshot_ids"]["silver"] == "102"
-    assert set(outcome["athena_query_execution_ids"]) == {
-        "bronze",
-        "silver",
-        "quarantine",
-        "manifest",
-    }
+    assert outcome["redshift_statement_id"] == "statement-1"
 
 
 def test_failed_reconciliation_invariant_raises_and_cannot_publish() -> None:
@@ -154,18 +145,27 @@ def test_failed_reconciliation_invariant_raises_and_cannot_publish() -> None:
             source_year=2024,
             source_month=1,
             ingestion_run_id="stable-run",
-            athena_workgroup="wg",
             redshift_database="lakehouse",
             redshift_workgroup_name="serverless",
-            athena_runner=FakeAthenaRunner(
+            redshift_client=FakeRedshiftData(
                 [
-                    ("5",),
-                    ("1",),
-                    ("3",),
-                    ("silver_published", "5", "1", "3", "101", "102", "103"),
+                    [
+                        _redshift_record(
+                            5,
+                            1,
+                            3,
+                            1,
+                            "silver_published",
+                            5,
+                            1,
+                            3,
+                            "101",
+                            "102",
+                            "103",
+                        )
+                    ]
                 ]
             ),
-            redshift_client=FakeRedshiftData([[[{"longValue": 1}]]]),
         )
 
 
@@ -218,18 +218,15 @@ def test_verification_is_bounded_to_publication_silver_and_gold() -> None:
         s3_client=s3,
         now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    athena = FakeAthenaRunner([("1",)])
     outcome = verify_month(
         source_year=2024,
         source_month=1,
         ingestion_run_id="stable-run",
         publication=publication,
-        athena_workgroup="wg",
         redshift_database="lakehouse",
         redshift_workgroup_name="serverless",
-        athena_runner=athena,
-        redshift_client=FakeRedshiftData([[[{"longValue": 1}]]]),
+        redshift_client=FakeRedshiftData([[_redshift_record(1, 1)]]),
         s3_client=s3,
     )
     assert outcome["silver_row_count"] == outcome["gold_row_count"] == 1
-    assert len(athena.calls) == 1
+    assert outcome["redshift_statement_id"] == "statement-1"

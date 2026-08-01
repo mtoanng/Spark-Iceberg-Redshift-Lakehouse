@@ -1,9 +1,7 @@
-"""Bronze/Silver row contracts for NYC HVFHV data.
+"""Test-only Bronze/Silver reference behavior for NYC HVFHV fixtures.
 
-The functions in this module are intentionally pure Python so they can be
-tested with small fixtures on a laptop. EMR Serverless uses the same identity
-and reason-code contracts at runtime; this module neither starts Spark nor
-writes canonical storage.
+These pure-Python functions exercise shared identity and reason-code contracts.
+They are not packaged or deployed as an ETL implementation.
 """
 
 from __future__ import annotations
@@ -138,11 +136,9 @@ def _quarantine_row(row: Mapping[str, object], code: str) -> dict[str, object]:
 def transform_silver(
     bronze_rows: Sequence[Mapping[str, object]],
     zone_ids: set[int],
-    *,
-    existing_row_ids: set[str] | None = None,
 ) -> SilverBatch:
     """Validate, deduplicate, and derive Silver trip rows with quarantine reasons."""
-    seen_row_ids = set(existing_row_ids or set())
+    seen_row_ids: set[str] = set()
     silver_rows: list[dict[str, object]] = []
     quarantine_rows: list[dict[str, object]] = []
 

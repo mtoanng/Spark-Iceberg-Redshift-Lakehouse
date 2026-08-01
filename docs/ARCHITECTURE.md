@@ -10,10 +10,10 @@ regular MWAA / Airflow 3
         |                                  |
         +--> EMR Serverless Silver/Q ------+--> S3 Iceberg
                                                |
-                                          Glue Catalog
-                                           /         \
-                                      Athena       Spectrum
-                                                      |
+                                          Glue Data Catalog
+                                                   |
+                                               Spectrum
+                                                   |
                                               Redshift Serverless
                                                       |
                                                  dbt managed Gold
@@ -27,16 +27,20 @@ Storage, compute, metadata, orchestration, and serving are intentionally
 separate:
 
 - S3/Iceberg is the canonical open data plane.
-- Glue is the shared metadata boundary.
+- Glue Data Catalog is metadata only; there are no Glue ETL jobs.
 - EMR Serverless performs Spark work and owns no persistent cluster.
-- Redshift Spectrum reads the same Silver tables without copying them first.
+- Redshift Spectrum is the only query path for Bronze, Silver, quarantine, and
+  operational Iceberg tables.
 - dbt creates the managed serving model inside Redshift.
 - MWAA controls stage ordering but contains no transformation logic.
-- Athena is a bounded, read-only independent path for open-layer evidence.
+- Reconciliation and verification use Redshift Data API; there is no second
+  query engine.
 
 ## Network and authentication
 
 MWAA and Redshift Serverless use the same existing VPC and two private subnets.
+MWAA 3.2.1 exposes its IAM-authorized UI publicly while worker Task API traffic
+uses the service-managed private endpoint (`PUBLIC_AND_PRIVATE`).
 Redshift accepts port 5439 only from the MWAA security group. MWAA uses its
 execution role for AWS APIs and dbt uses Redshift Serverless IAM-role
 authentication. Terraform creates the corresponding password-disabled Redshift
