@@ -11,6 +11,7 @@ and serving that a larger production platform would use.
 
 ## Architecture
 
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/544092eb-90e2-41ad-8927-adecc2afe699" />
 
 The main responsibilities are deliberately explicit:
 
