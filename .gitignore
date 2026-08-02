@@ -114,6 +114,8 @@ scratch/
 
 # Documentation build output
 site/
+docs/evidence
+docs/learning
 
 # PyCharm
 .idea/
