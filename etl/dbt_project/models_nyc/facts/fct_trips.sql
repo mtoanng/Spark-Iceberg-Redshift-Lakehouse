@@ -1,10 +1,7 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key=['row_id'],
-    file_format='iceberg',
-    partition_by=['source_year', 'source_month'],
-    iceberg_expire_snapshots='False'
+    unique_key='row_id'
 ) }}
 
 -- Grain: exactly one row per validated, deduplicated Silver row_id.
@@ -13,7 +10,7 @@ select
     business_trip_key,
     identity_policy_version,
     operator_code,
-    cast(date_format(pickup_date, 'yyyyMMdd') as int) as pickup_date_key,
+    cast(to_char(pickup_date, 'YYYYMMDD') as integer) as pickup_date_key,
     pickup_zone_id,
     dropoff_zone_id,
     request_datetime,
@@ -33,7 +30,7 @@ select
     {% if var('source_year') | int >= 2025 %}
     cbd_congestion_fee,
     {% else %}
-    cast(null as double) as cbd_congestion_fee,
+    cast(null as double precision) as cbd_congestion_fee,
     {% endif %}
     source_year,
     source_month,

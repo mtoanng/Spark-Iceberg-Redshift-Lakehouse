@@ -1,5 +1,5 @@
 locals {
-  glue_databases = toset(["bronze", "silver", "ops", "gold"])
+  glue_databases = toset(["bronze", "silver", "ops"])
 }
 
 resource "aws_glue_catalog_database" "namespace" {

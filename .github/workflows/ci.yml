@@ -13,23 +13,26 @@ jobs:
     name: Python fixtures and contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          # Match the PySpark version bundled by EMR 6.15.
+          python-version: "3.11"
           cache: pip
       - name: Install credential-independent test tools
         run: python -m pip install --requirement requirements-ci.txt
       - name: Validate repository hygiene
         run: python scripts/check_repository_hygiene.py
       - name: Compile Python
-        run: python -m compileall -q athena etl scripts tests
-      - name: Run unit and contract tests
-        run: python -m pytest -p no:cacheprovider tests/unit tests/contract -q
-      - name: Validate Glue package contract
-        run: python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
-      - name: Validate shell syntax
-        run: bash -n scripts/bootstrap_airflow_runner.sh
+        run: python -m compileall -q etl scripts tests
+      - name: Check Python formatting
+        run: black --check etl scripts tests
+      - name: Lint Python
+        run: flake8 etl scripts tests --extend-ignore=E203,E501,W503
+      - name: Run repository tests
+        run: python -m pytest -p no:cacheprovider tests/unit -q
+      - name: Validate Spark package contract
+        run: python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
       - name: Validate PowerShell syntax
         shell: pwsh
         run: |
@@ -51,23 +54,27 @@ jobs:
       - name: Parse dbt graph without credentials
         working-directory: etl/dbt_project
         env:
-          GLUE_ROLE_ARN: arn:aws:iam::000000000000:role/ci-not-used
-          S3_GOLD_PATH: s3://ci-not-used/warehouse/gold
-        run: dbt deps --profiles-dir . && dbt parse --profiles-dir . --target ci --no-partial-parse && dbt compile --profiles-dir . --target ci --no-partial-parse
+          DBT_CI_REDSHIFT_HOST: 127.0.0.1
+          DBT_CI_REDSHIFT_USER: ci
+          DBT_CI_REDSHIFT_PASSWORD: ci-not-used
+          DBT_CI_REDSHIFT_DATABASE: lakehouse
+        run: dbt parse --profiles-dir . --target ci --no-partial-parse && dbt compile --profiles-dir . --target ci --no-partial-parse --no-introspect --no-populate-cache
+      - name: Verify dbt graph contract
+        run: python scripts/verify_dbt_manifest.py
 
   terraform:
     name: Terraform format and validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.15.8"
       - name: Build Terraform file dependency
-        run: python scripts/package_glue_jobs.py --output build/nyc_glue_jobs.zip --check
+        run: python scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
       - name: Format check
         run: terraform fmt -check -recursive terraform
       - name: Validate without a backend

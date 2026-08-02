@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from etl.contracts.nyc_hvfhs_quality import REASON_PRIORITY, reason_code
 
 
@@ -34,3 +36,11 @@ def test_reason_priority_prefers_timeline_then_zone_then_numeric() -> None:
     assert reason_code(row, {1, 2}) == "UNKNOWN_PICKUP_ZONE"
     row = {**BASE, "trip_miles": None, "driver_pay": -1}
     assert reason_code(row, {1, 2}) == "MISSING_OR_INVALID_NUMERIC"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numeric_values_are_quarantined(value: float) -> None:
+    assert (
+        reason_code({**BASE, "trip_miles": value}, {1, 2})
+        == "MISSING_OR_INVALID_NUMERIC"
+    )

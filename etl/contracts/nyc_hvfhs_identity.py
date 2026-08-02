@@ -19,7 +19,12 @@ IDENTITY_POLICY_2024 = "nyc-hvfhv-row-v1-2024"
 IDENTITY_POLICY_2025 = "nyc-hvfhv-row-v1-2025"
 
 TIMESTAMP_COLUMNS = frozenset(
-    {"request_datetime", "pickup_datetime", "dropoff_datetime"}
+    {
+        "request_datetime",
+        "on_scene_datetime",
+        "pickup_datetime",
+        "dropoff_datetime",
+    }
 )
 INTEGER_COLUMNS = frozenset({"PULocationID", "DOLocationID", "trip_time"})
 NUMERIC_COLUMNS = frozenset(
@@ -27,7 +32,10 @@ NUMERIC_COLUMNS = frozenset(
         "trip_miles",
         "base_passenger_fare",
         "tolls",
+        "bcf",
         "sales_tax",
+        "congestion_surcharge",
+        "airport_fee",
         "tips",
         "driver_pay",
         "cbd_congestion_fee",
@@ -37,7 +45,9 @@ NUMERIC_COLUMNS = frozenset(
 IDENTITY_COLUMNS_2024 = (
     "hvfhs_license_num",
     "dispatching_base_num",
+    "originating_base_num",
     "request_datetime",
+    "on_scene_datetime",
     "pickup_datetime",
     "dropoff_datetime",
     "PULocationID",
@@ -46,11 +56,17 @@ IDENTITY_COLUMNS_2024 = (
     "trip_time",
     "base_passenger_fare",
     "tolls",
+    "bcf",
     "sales_tax",
+    "congestion_surcharge",
+    "airport_fee",
     "tips",
     "driver_pay",
     "shared_request_flag",
     "shared_match_flag",
+    "access_a_ride_flag",
+    "wav_request_flag",
+    "wav_match_flag",
 )
 IDENTITY_COLUMNS_2025 = IDENTITY_COLUMNS_2024 + ("cbd_congestion_fee",)
 BUSINESS_KEY_COLUMNS = (

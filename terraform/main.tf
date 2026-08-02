@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -53,29 +53,72 @@ output "glue_database_name" {
   description = "Canonical Glue Catalog namespaces for the NYC lakehouse."
 }
 
-output "glue_role_arn" {
-  value       = aws_iam_role.glue_service.arn
-  description = "Glue execution role ARN."
+output "emr_serverless_application_id" {
+  value       = aws_emrserverless_application.spark.id
+  description = "Persistent EMR Serverless Spark application ID."
 }
 
-output "glue_job_names" {
-  value = {
-    initialize         = aws_glue_job.initialize.name
-    bronze             = aws_glue_job.bronze.name
-    silver             = aws_glue_job.silver.name
-    reconciliation     = aws_glue_job.quality.name
-    great_expectations = aws_glue_job.great_expectations.name
-    publication        = aws_glue_job.publication.name
-  }
-  description = "Glue jobs consumed by the Phase 5 Airflow DAG."
+output "emr_serverless_execution_role_arn" {
+  value       = aws_iam_role.emr_serverless_execution.arn
+  description = "EMR Serverless execution role ARN."
 }
 
-output "airflow_runner_instance_profile" {
-  value       = var.airflow_runner_ami_id == "" ? null : aws_iam_instance_profile.airflow_runner[0].name
-  description = "Instance profile used by the optional temporary Airflow runner."
+output "spark_script_prefix_uri" {
+  value       = "s3://${aws_s3_bucket.lakehouse.id}/spark_jobs"
+  description = "S3 prefix for EMR Serverless PySpark entrypoints."
+}
+
+output "spark_package_uri" {
+  value       = "s3://${aws_s3_bucket.lakehouse.id}/${var.spark_package_s3_key}"
+  description = "S3 URI for the shared EMR Serverless Python package."
+}
+
+output "redshift_serverless_host" {
+  value       = aws_redshiftserverless_workgroup.gold.endpoint[0].address
+  description = "Private Redshift Serverless endpoint used by dbt-redshift."
+}
+
+output "redshift_serverless_workgroup_name" {
+  value       = aws_redshiftserverless_workgroup.gold.workgroup_name
+  description = "Redshift Serverless workgroup used by dbt-redshift."
+}
+
+output "redshift_database_name" {
+  value       = aws_redshiftserverless_namespace.gold.db_name
+  description = "Redshift database containing the managed Gold schema."
+}
+
+output "mwaa_environment_name" {
+  value       = aws_mwaa_environment.orchestration.name
+  description = "Regular MWAA environment that owns pipeline orchestration."
+}
+
+output "mwaa_webserver_url" {
+  value       = aws_mwaa_environment.orchestration.webserver_url
+  description = "IAM-protected regular MWAA webserver URL."
 }
 
 output "publication_prefix_uri" {
   value       = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
   description = "Month-partitioned publication-manifest prefix."
+}
+
+output "airflow_variables" {
+  description = "Non-secret variables to import into regular MWAA before the first DAG run."
+  value = {
+    nyc_landing_uri                       = "s3://${aws_s3_bucket.lakehouse.id}/${var.landing_prefix}"
+    nyc_taxi_zone_uri                     = "s3://${aws_s3_bucket.lakehouse.id}/${var.reference_prefix}/taxi_zone_lookup.csv"
+    nyc_emr_serverless_application_id     = aws_emrserverless_application.spark.id
+    nyc_emr_serverless_execution_role_arn = aws_iam_role.emr_serverless_execution.arn
+    nyc_spark_script_prefix_uri           = "s3://${aws_s3_bucket.lakehouse.id}/spark_jobs"
+    nyc_spark_package_uri                 = "s3://${aws_s3_bucket.lakehouse.id}/${var.spark_package_s3_key}"
+    nyc_emr_serverless_log_uri            = "s3://${aws_s3_bucket.lakehouse.id}/emr-serverless-logs"
+    nyc_warehouse_uri                     = "s3://${aws_s3_bucket.lakehouse.id}/${var.warehouse_prefix}"
+    nyc_publication_prefix_uri            = "s3://${aws_s3_bucket.lakehouse.id}/manifests"
+    redshift_host                         = aws_redshiftserverless_workgroup.gold.endpoint[0].address
+    redshift_database                     = aws_redshiftserverless_namespace.gold.db_name
+    redshift_workgroup_name               = aws_redshiftserverless_workgroup.gold.workgroup_name
+    aws_account_id                        = data.aws_caller_identity.current.account_id
+    aws_region                            = var.aws_region
+  }
 }

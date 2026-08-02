@@ -54,6 +54,9 @@ def test_python_identity_matches_pinned_golden_vectors() -> None:
         )
         assert by_name[corrected]["row_id"] != by_name["normal_2024"]["row_id"]
 
+    base = vectors[0]["record"]
+    assert row_id({**base, "bcf": 1}, 2024) != row_id(base, 2024)
+
 
 def test_spark_identity_is_byte_for_byte_equal_to_python() -> None:
     os.environ["PYSPARK_PYTHON"] = sys.executable
@@ -74,7 +77,9 @@ def test_spark_identity_is_byte_for_byte_equal_to_python() -> None:
                 [
                     {
                         **{
-                            key: None if value is None else str(value)
+                            # Empty strings exercise the same canonical NULL token
+                            # without creating all-null columns Spark cannot infer.
+                            key: "" if value is None else str(value)
                             for key, value in vector["record"].items()
                         },
                         "_name": vector["name"],

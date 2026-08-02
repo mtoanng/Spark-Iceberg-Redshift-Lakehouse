@@ -1,4 +1,4 @@
-{{ config(materialized='table', file_format='iceberg') }}
+{{ config(materialized='table') }}
 
 select distinct
     operator_code
