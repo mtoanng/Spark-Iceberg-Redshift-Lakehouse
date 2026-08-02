@@ -1,50 +1,74 @@
-# NYC HVFHV core industrial lakehouse
+# NYC HVFHV serverless lakehouse
 
-Production-shaped, cost-bounded AWS reference architecture for one immutable
-NYC TLC HVFHV month:
+This repository is a production-shaped, cost-bounded AWS data engineering
+project for monthly NYC ride-hailing data. It turns one immutable source month
+into governed Bronze and Silver Iceberg datasets and a tested Gold analytical
+product in Redshift.
 
-```text
-upstream-owned S3 landing
--> regular Amazon MWAA / Airflow 3
--> EMR Serverless Spark Bronze
--> EMR Serverless Spark Silver + quarantine
--> S3 Iceberg + Glue Data Catalog
--> Redshift Serverless Spectrum
--> Cosmos Watcher + one dbt-redshift build
--> six managed Gold relations
--> reconciliation -> publication -> bounded verification
-```
+The deployment is intentionally small to control cost. The architecture keeps
+the same separation of orchestration, compute, storage, metadata, modeling,
+and serving that a larger production platform would use.
 
-Glue Data Catalog stores metadata only; all open-layer and Gold SQL reads use
-Redshift Serverless/Spectrum. EMR Serverless is the sole Spark compute path.
+## Architecture
 
-The repository deliberately starts at the S3 landing contract. It does not
-download or upload the producer's data. The upstream producer must land:
 
-- `landing/fhvhv_tripdata_YYYY-MM.parquet`;
-- `reference/taxi_zone_lookup.csv`;
-- non-empty objects with lowercase SHA-256 in S3 metadata key `sha256`.
+The main responsibilities are deliberately explicit:
 
-## Correctness contract
+| Component | Responsibility |
+| --- | --- |
+| S3 landing | Holds immutable monthly source files supplied by the upstream producer. |
+| Amazon MWAA / Airflow | Coordinates the monthly workflow, dependencies, retries, and reruns. |
+| EMR Serverless + Spark | Reads the source, creates Bronze, and produces validated Silver and quarantine records. |
+| S3 + Apache Iceberg | Stores the canonical open Bronze, Silver, quarantine, and operational tables with transactional snapshots. |
+| AWS Glue Data Catalog | Makes Iceberg metadata available to EMR and Redshift; it is not an ETL engine in this project. |
+| Redshift Serverless + Spectrum | Reads Silver from the lakehouse and serves managed Gold tables through one SQL query plane. |
+| Cosmos + dbt-redshift | Runs the dbt model and test graph under Airflow orchestration to build Gold. |
+| Publication manifest | Records the exact source, Iceberg snapshots, dbt result, and row counts accepted for a published month. |
 
-- Source identity: URI + SHA-256 + byte size + year + month.
-- `row_id`: exact-row SHA-256 and the only deduplication/merge key.
-- `business_trip_key`: analytical probable-trip key; never drops a row.
-- Bronze is source-faithful and owns object/schema/non-empty checks.
-- Silver owns deterministic validation, deduplication, and quarantine.
-- `Bronze = Silver + quarantine`.
-- `Silver = Gold fct_trips`.
-- Gold is exactly three dimensions, one fact, and two marts.
-- Publication is one immutable JSON release for the stable source run ID.
+There is no Athena query path and no AWS Glue ETL job. EMR Serverless is the
+only Spark compute path, while Redshift is the analytical serving path.
 
-An identical completed source rerun reuses its open-layer snapshots and first
-successful dbt artifact, then revalidates the serving output. A changed URI,
-checksum, or byte size for an existing month is rejected; there is no `force`
-bypass.
+## How one monthly run works
+
+1. The upstream producer lands the trip Parquet file and taxi-zone reference
+   file in S3 with their SHA-256 metadata. This repository starts from that
+   landing contract; it does not download or upload source data.
+2. Airflow identifies the immutable source and starts the Bronze Spark job on
+   EMR Serverless. Bronze preserves the accepted source rows and records the
+   source run.
+3. A second Spark job validates and deterministically deduplicates Bronze.
+   Valid rows go to Silver; rejected rows go to quarantine with a reason.
+4. Redshift Spectrum reads the Silver Iceberg table through Glue Data Catalog.
+   Cosmos runs one tested dbt build that creates three dimensions, one fact,
+   and two analytical marts as managed Redshift relations.
+5. Reconciliation checks that all Bronze rows are accounted for and that the
+   Silver and Gold fact counts agree.
+6. Only a reconciled run receives an immutable publication manifest. A final
+   bounded read verifies that the published Gold output is available to a
+   consumer.
+
+## Reliability and correctness
+
+The pipeline is designed around a few observable guarantees rather than a
+large framework:
+
+- **Immutable source identity:** URI, SHA-256, object size, year, and month
+  identify a source. Changed content for an existing month is rejected.
+- **Safe reruns:** the same completed source reuses its committed Iceberg
+  snapshots and successful dbt result before revalidating the serving output.
+- **Deterministic row handling:** exact duplicate rows share a stable `row_id`;
+  validation rules always send each Bronze row to either Silver or quarantine.
+- **Cross-layer reconciliation:** `Bronze = Silver + quarantine` and
+  `Silver = Gold fct_trips` must hold before publication.
+- **Evidence-based publication:** the publication JSON ties the accepted
+  source to exact Iceberg snapshots, dbt output, and reconciled row counts.
+
+Detailed field-level rules, state transitions, and failure behavior live in
+[runtime semantics](docs/SEMANTICS.md).
 
 ## Gold data product
 
-The managed Redshift output contains:
+The consumer contract is six managed Redshift relations:
 
 ```text
 dim_date
@@ -55,11 +79,24 @@ mart_hourly_zone_demand
 mart_operator_metrics
 ```
 
-The marts support zone/hour demand planning and monthly operator performance
-analysis. A dashboard is intentionally outside this repository: the Gold
-relations are the consumer contract.
+The marts support demand analysis by pickup zone and hour, plus monthly
+operator performance analysis. BI tools and SQL users consume these relations;
+a vendor-specific dashboard is intentionally outside this repository.
 
-## Local verification
+## Repository guide
+
+```text
+etl/dags/             Airflow workflow and task dependencies
+etl/spark_jobs/       Bronze and Silver Spark transformations
+etl/dbt_project/      Redshift Gold models and tests
+etl/orchestration/    Reconciliation, publication, and verification boundaries
+terraform/            AWS infrastructure
+docs/                 Architecture, semantics, deployment, and teardown guides
+```
+
+## Verify and deploy
+
+Run the core local checks before planning infrastructure:
 
 ```powershell
 venv\Scripts\python.exe -m black --check etl scripts tests
@@ -67,25 +104,21 @@ venv\Scripts\python.exe -m compileall -q etl scripts tests
 venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit -q
 venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 
-$env:DBT_CI_REDSHIFT_HOST='127.0.0.1'
-$env:DBT_CI_REDSHIFT_USER='ci'
-$env:DBT_CI_REDSHIFT_PASSWORD='ci-not-used'
-$env:DBT_CI_REDSHIFT_DATABASE='lakehouse'
-venv\Scripts\dbt.exe parse --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci --no-partial-parse
-venv\Scripts\dbt.exe compile --project-dir etl/dbt_project --profiles-dir etl/dbt_project --target ci --no-partial-parse --no-introspect --no-populate-cache
-venv\Scripts\python.exe scripts/verify_dbt_manifest.py
-
 terraform -chdir=terraform fmt -check
 terraform -chdir=terraform init -backend=false
 terraform -chdir=terraform validate
 ```
 
-Deployment must use a dedicated NYC Terraform state. A first-deployment plan
-must contain no destroy actions; see the runbook preflight before applying.
+For prerequisites, service quotas, Terraform state setup, deployment order,
+the first bounded AWS run, retained evidence, and safe cleanup, follow the
+[deployment runbook](docs/RUNBOOK.md). The [architecture document](docs/ARCHITECTURE.md)
+explains the component boundaries, and the [teardown runbook](docs/TEARDOWN_RUNBOOK.md)
+covers resource removal.
 
-See [the blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md), [runtime
-semantics](docs/SEMANTICS.md), and [deployment/runbook](docs/RUNBOOK.md).
+## Verification status
 
-No AWS execution is claimed by repository tests. MWAA, S3, EMR Serverless,
-Iceberg commits, Redshift Serverless/Spectrum, rerun, schema evolution, and
-teardown remain **NOT VERIFIED** until a retained bounded AWS run exists.
+Local tests validate code, contracts, packaging, dbt parsing, and Terraform
+configuration. They do not prove a live AWS deployment. MWAA, S3, EMR
+Serverless, Iceberg commits, Redshift Serverless/Spectrum, rerun behavior,
+schema evolution, and teardown remain **NOT VERIFIED** until the project
+retains evidence from a bounded end-to-end AWS run.
