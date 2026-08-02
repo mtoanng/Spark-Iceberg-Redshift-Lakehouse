@@ -1,5 +1,0 @@
--- Replace only the validated {{gold_database}} and {{gold_table}} identifiers.
--- Supply the snapshot ID as Athena execution parameter 1; do not interpolate it.
-SELECT *
-FROM "{{gold_database}}"."{{gold_table}}" FOR VERSION AS OF ?
-LIMIT 100;

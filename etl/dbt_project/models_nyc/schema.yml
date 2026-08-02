@@ -32,9 +32,16 @@ models:
   - name: fct_trips
     description: One row per validated, deduplicated Silver trip.
     columns:
-      - name: trip_id
+      - name: row_id
         data_tests:
           - unique
+          - not_null
+      - name: business_trip_key
+        description: Probable real-world trip key; not an exact-row deduplication key.
+        data_tests:
+          - not_null
+      - name: identity_policy_version
+        data_tests:
           - not_null
       - name: operator_code
         data_tests:

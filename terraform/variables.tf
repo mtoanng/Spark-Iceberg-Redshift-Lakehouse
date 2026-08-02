@@ -10,8 +10,8 @@ variable "environment" {
   default     = "dev"
 
   validation {
-    condition     = can(regex("^[a-z0-9-]+$", var.environment))
-    error_message = "environment must contain lowercase letters, digits, and hyphens only."
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,15}$", var.environment))
+    error_message = "environment must be 1-16 lowercase letters, digits, or hyphens."
   }
 }
 
@@ -19,6 +19,11 @@ variable "project_name" {
   type        = string
   description = "Resource prefix for the NYC HVFHV lakehouse."
   default     = "nyc-hvfhs-lakehouse"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{2,39}$", var.project_name))
+    error_message = "project_name must be a short lowercase resource prefix."
+  }
 }
 
 variable "s3_bucket_name" {
@@ -44,77 +49,83 @@ variable "warehouse_prefix" {
   default     = "warehouse"
 }
 
-variable "athena_results_prefix" {
+variable "spark_package_path" {
   type        = string
-  description = "Prefix in the existing project bucket for Athena query results."
-  default     = "athena-results"
+  description = "Repository-root-relative deterministic PySpark zip produced before deployment."
+  default     = "build/nyc_spark_jobs.zip"
+}
+
+variable "redshift_database_name" {
+  type        = string
+  description = "Database created inside the bounded Redshift Serverless namespace."
+  default     = "lakehouse"
+}
+
+variable "spark_package_s3_key" {
+  type        = string
+  description = "S3 key for the shared EMR Serverless Python package."
+  default     = "spark_jobs/nyc_spark_jobs.zip"
+}
+
+variable "emr_serverless_idle_timeout_minutes" {
+  type        = number
+  description = "Idle minutes before the persistent EMR Serverless application stops."
+  default     = 15
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9!_.*'()=-]+(/[a-zA-Z0-9!_.*'()=-]+)*$", var.athena_results_prefix))
-    error_message = "athena_results_prefix must be a safe, relative S3 prefix."
+    condition     = var.emr_serverless_idle_timeout_minutes >= 1 && var.emr_serverless_idle_timeout_minutes <= 60
+    error_message = "emr_serverless_idle_timeout_minutes must be between 1 and 60."
   }
 }
 
-variable "athena_bytes_scanned_cutoff" {
-  type        = number
-  description = "Maximum bytes Athena may scan per query; Athena requires at least 10 MiB."
-  default     = 104857600
+variable "vpc_id" {
+  type        = string
+  description = "VPC containing regular MWAA and Redshift Serverless."
 
   validation {
-    condition     = var.athena_bytes_scanned_cutoff >= 10485760
-    error_message = "athena_bytes_scanned_cutoff must be at least 10485760 bytes (10 MiB)."
+    condition     = can(regex("^vpc-[0-9a-f]+$", var.vpc_id))
+    error_message = "vpc_id must be an AWS VPC identifier."
   }
 }
 
-variable "glue_worker_type" {
-  type        = string
-  description = "Smallest approved Glue worker type for the bounded demo."
-  default     = "G.1X"
+variable "private_subnet_ids" {
+  type        = list(string)
+  description = "Exactly two private subnets in distinct Availability Zones with required AWS/PyPI egress."
+
+  validation {
+    condition = (
+      length(var.private_subnet_ids) == 2 &&
+      length(distinct(var.private_subnet_ids)) == 2 &&
+      alltrue([for id in var.private_subnet_ids : can(regex("^subnet-[0-9a-f]+$", id))])
+    )
+    error_message = "private_subnet_ids must contain two distinct AWS subnet identifiers."
+  }
 }
 
-variable "glue_worker_count" {
+variable "mwaa_environment_class" {
+  type        = string
+  description = "Cost-bounded regular MWAA environment class."
+  default     = "mw1.small"
+}
+
+variable "mwaa_max_workers" {
   type        = number
-  description = "Worker count for each Glue job."
+  description = "Maximum regular MWAA workers for the bounded pipeline."
   default     = 2
 
   validation {
-    condition     = var.glue_worker_count >= 2 && var.glue_worker_count <= 10
-    error_message = "glue_worker_count must be between 2 and 10."
+    condition     = var.mwaa_max_workers >= 1 && var.mwaa_max_workers <= 5
+    error_message = "mwaa_max_workers must be between 1 and 5."
   }
 }
 
-variable "glue_package_path" {
+variable "mwaa_dag_s3_prefix" {
   type        = string
-  description = "Deterministic zip produced by scripts/package_glue_jobs.py before deployment."
-  default     = "build/nyc_glue_jobs.zip"
-}
+  description = "S3 prefix synchronized by regular MWAA as its DAG folder."
+  default     = "airflow"
 
-variable "glue_package_s3_key" {
-  type        = string
-  description = "S3 key for the shared Glue Python package."
-  default     = "glue_jobs/nyc_glue_jobs.zip"
-}
-
-variable "airflow_runner_ami_id" {
-  type        = string
-  description = "Optional approved Linux AMI ID; empty keeps the temporary runner disabled."
-  default     = ""
-}
-
-variable "airflow_runner_subnet_id" {
-  type        = string
-  description = "Subnet for the optional temporary Airflow runner."
-  default     = ""
-}
-
-variable "airflow_runner_instance_type" {
-  type        = string
-  description = "Instance type for the optional temporary Airflow runner."
-  default     = "t3.small"
-}
-
-variable "airflow_runner_key_name" {
-  type        = string
-  description = "Optional pre-existing EC2 key name; leave empty for SSM-only access."
-  default     = ""
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9!_.*'()=-]+(/[a-zA-Z0-9!_.*'()=-]+)*$", var.mwaa_dag_s3_prefix))
+    error_message = "mwaa_dag_s3_prefix must be a safe, relative S3 prefix."
+  }
 }

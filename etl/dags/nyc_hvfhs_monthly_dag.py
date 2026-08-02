@@ -1,28 +1,43 @@
-"""Manual Airflow 3 orchestration for the NYC HVFHV lakehouse.
-
-The monthly DAG processes exactly one immutable month. The companion backfill
-DAG triggers four such runs sequentially. Neither DAG contains transformation
-logic; Glue, dbt, and the quality checkpoint own that work.
-"""
+"""Airflow 3 orchestration for the bounded NYC HVFHV lakehouse."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
+import re
+from urllib.parse import urlparse
 
-from airflow import DAG
-from airflow.models import Variable
-from airflow.models.param import Param
-from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
+import boto3
+from airflow.providers.amazon.aws.operators.emr import EmrServerlessStartJobOperator
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.sdk import DAG, Param, Variable
+from cosmos import DbtTaskGroup
+from cosmos.config import ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, InvocationMode, TestBehavior
 
-from etl.orchestration.nyc_hvfhs_runs import MonthlyRunRequest, audit_for_source
-from etl.sources.nyc_hvfhs import SourceFile, monthly_trip_filename
+from etl.contracts.nyc_hvfhs_identity import identity_policy_version
+from etl.orchestration.nyc_hvfhs_cosmos import require_dbt_result_artifact
+from etl.orchestration.nyc_hvfhs_publication import publish_month
+from etl.orchestration.nyc_hvfhs_reconciliation import reconcile_month
+from etl.orchestration.nyc_hvfhs_runs import (
+    MonthlyRunRequest,
+    sequential_backfill_requests,
+)
+from etl.orchestration.nyc_hvfhs_verification import verify_month
+from etl.sources.nyc_hvfhs import (
+    SourceFile,
+    monthly_trip_filename,
+    stable_run_id,
+    validate_landed_source,
+)
 
 
 MONTHLY_DAG_ID = "nyc_hvfhs_monthly"
 BACKFILL_DAG_ID = "nyc_hvfhs_four_month_backfill"
+DBT_PROJECT_PATH = Path(__file__).resolve().parents[1] / "dbt_project"
+DBT_PROFILES_PATH = DBT_PROJECT_PATH / "profiles.yml"
+DBT_EXECUTABLE_PATH = Path("/usr/local/airflow/dbt_venv/bin/dbt")
 
 DEFAULT_ARGS = {
     "owner": "data-engineering",
@@ -32,35 +47,95 @@ DEFAULT_ARGS = {
     "email_on_retry": False,
 }
 
+EMR_APPLICATION_ID = "{{ var.value.nyc_emr_serverless_application_id }}"
+EMR_EXECUTION_ROLE_ARN = "{{ var.value.nyc_emr_serverless_execution_role_arn }}"
+EMR_SCRIPT_PREFIX_URI = "{{ var.value.nyc_spark_script_prefix_uri }}"
+EMR_PACKAGE_URI = "{{ var.value.nyc_spark_package_uri }}"
+EMR_LOG_URI = "{{ var.value.nyc_emr_serverless_log_uri }}"
 
-def _prepare_month(year: int, month: int, force: bool) -> dict[str, object]:
-    """Resolve immutable source facts from Airflow Variables and return an audit."""
 
-    request = MonthlyRunRequest(year=int(year), month=int(month), force=bool(force))
-    filename = monthly_trip_filename(request.year, request.month)
-    landing_uri = Variable.get("nyc_landing_uri").rstrip("/")
-    checksum = Variable.get(f"nyc_hvfhs_{request.year}_{request.month:02d}_sha256")
-    size_bytes = int(
-        Variable.get(f"nyc_hvfhs_{request.year}_{request.month:02d}_size_bytes")
+def _emr_spark_job(script_name: str, arguments: list[str]) -> dict[str, object]:
+    return {
+        "application_id": EMR_APPLICATION_ID,
+        "execution_role_arn": EMR_EXECUTION_ROLE_ARN,
+        "job_driver": {
+            "sparkSubmit": {
+                "entryPoint": f"{EMR_SCRIPT_PREFIX_URI}/{script_name}",
+                "entryPointArguments": arguments,
+                "sparkSubmitParameters": (
+                    f"--py-files {EMR_PACKAGE_URI} "
+                    "--conf spark.jars=/usr/share/aws/iceberg/lib/iceberg-spark3-runtime.jar "
+                    "--conf spark.driver.cores=1 "
+                    "--conf spark.driver.memory=3g "
+                    "--conf spark.executor.cores=1 "
+                    "--conf spark.executor.memory=3g "
+                    "--conf spark.dynamicAllocation.initialExecutors=1 "
+                    "--conf spark.dynamicAllocation.maxExecutors=3 "
+                    "--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
+                    "--conf spark.sql.defaultCatalog=glue_catalog "
+                    "--conf spark.sql.catalog.glue_catalog=org.apache.iceberg.spark.SparkCatalog "
+                    "--conf spark.sql.catalog.glue_catalog.warehouse={{ var.value.nyc_warehouse_uri }} "
+                    "--conf spark.sql.catalog.glue_catalog.catalog-impl=org.apache.iceberg.aws.glue.GlueCatalog "
+                    "--conf spark.sql.catalog.glue_catalog.io-impl=org.apache.iceberg.aws.s3.S3FileIO"
+                ),
+            }
+        },
+        "configuration_overrides": {
+            "monitoringConfiguration": {
+                "s3MonitoringConfiguration": {"logUri": EMR_LOG_URI}
+            }
+        },
+        "aws_conn_id": None,
+        "wait_for_completion": True,
+    }
+
+
+def _s3_identity(uri: str) -> tuple[str, int]:
+    """Read upstream-provided immutable identity from a landed object."""
+
+    parsed = urlparse(uri)
+    key = parsed.path.lstrip("/")
+    if parsed.scheme != "s3" or not parsed.netloc or not key:
+        raise ValueError(f"Expected a complete S3 URI, got {uri!r}")
+    head = boto3.client("s3").head_object(Bucket=parsed.netloc, Key=key)
+    checksum = str(head.get("Metadata", {}).get("sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise ValueError(f"Landed object is missing SHA-256 metadata: {uri}")
+    size = int(head.get("ContentLength", 0))
+    if size <= 0:
+        raise ValueError(f"Landed object is empty: {uri}")
+    return checksum, size
+
+
+def _prepare_month(year: int, month: int) -> dict[str, object]:
+    """Bind a requested month to the object identity already landed in S3."""
+
+    request = MonthlyRunRequest(year=int(year), month=int(month))
+    source_uri = (
+        f"{Variable.get('nyc_landing_uri').rstrip('/')}/"
+        f"{monthly_trip_filename(request.year, request.month)}"
     )
+    checksum, size_bytes = _s3_identity(source_uri)
     source = SourceFile(
         source_year=request.year,
         source_month=request.month,
-        source_uri=f"{landing_uri}/{filename}",
+        source_uri=source_uri,
         source_checksum=checksum,
         source_size_bytes=size_bytes,
     )
-    audit = audit_for_source(request, source)
+    validate_landed_source(source)
+    taxi_zone_uri = Variable.get("nyc_taxi_zone_uri")
+    taxi_zone_checksum, _ = _s3_identity(taxi_zone_uri)
     return {
-        "run_id": audit.run_id,
-        "source_year": audit.source_year,
-        "source_month": audit.source_month,
-        "source_uri": audit.source_uri,
-        "source_checksum": audit.source_checksum,
+        "run_id": stable_run_id(source),
+        "source_year": source.source_year,
+        "source_month": source.source_month,
+        "source_uri": source.source_uri,
+        "source_checksum": source.source_checksum,
         "source_size_bytes": source.source_size_bytes,
-        "force": audit.force,
-        "taxi_zone_uri": Variable.get("nyc_taxi_zone_uri"),
-        "taxi_zone_checksum": Variable.get("nyc_taxi_zone_sha256"),
+        "identity_policy_version": identity_policy_version(request.year),
+        "taxi_zone_uri": taxi_zone_uri,
+        "taxi_zone_checksum": taxi_zone_checksum,
     }
 
 
@@ -68,13 +143,12 @@ def _monthly_params() -> dict[str, Param]:
     return {
         "year": Param(2024, type="integer", minimum=2019, maximum=2099),
         "month": Param(1, type="integer", minimum=1, maximum=12),
-        "force": Param(False, type="boolean"),
     }
 
 
 with DAG(
     dag_id=MONTHLY_DAG_ID,
-    description="Manual one-month NYC TLC HVFHV Bronze-to-Gold run with a quality gate.",
+    description="One immutable NYC TLC month from Bronze through published Gold.",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
@@ -87,190 +161,188 @@ with DAG(
     prepare_month = PythonOperator(
         task_id="prepare_month",
         python_callable=_prepare_month,
+        op_kwargs={"year": "{{ params.year }}", "month": "{{ params.month }}"},
+    )
+
+    bronze_ingestion = EmrServerlessStartJobOperator(
+        task_id="bronze_ingestion_emr",
+        **_emr_spark_job(
+            "nyc_bronze_ingestion.py",
+            [
+                "--SOURCE_URI",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}",
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--SOURCE_CHECKSUM",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_checksum'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+                "--TAXI_ZONE_URI",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_uri'] }}",
+                "--TAXI_ZONE_CHECKSUM",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_checksum'] }}",
+                "--SOURCE_SIZE_BYTES",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_size_bytes'] }}",
+            ],
+        ),
+    )
+
+    silver_transform = EmrServerlessStartJobOperator(
+        task_id="silver_transform_emr",
+        **_emr_spark_job(
+            "nyc_silver_transform.py",
+            [
+                "--SOURCE_YEAR",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "--SOURCE_MONTH",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+                "--INGESTION_RUN_ID",
+                "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            ],
+        ),
+    )
+
+    dbt_build = DbtTaskGroup(
+        group_id="dbt_build",
+        project_config=ProjectConfig(
+            dbt_project_path=DBT_PROJECT_PATH,
+            install_dbt_deps=False,
+        ),
+        profile_config=ProfileConfig(
+            profile_name="nyc_hvfhs_lakehouse",
+            target_name="redshift",
+            profiles_yml_filepath=DBT_PROFILES_PATH,
+        ),
+        render_config=RenderConfig(
+            test_behavior=TestBehavior.BUILD,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+        ),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.WATCHER,
+            invocation_mode=InvocationMode.SUBPROCESS,
+            dbt_executable_path=DBT_EXECUTABLE_PATH,
+            setup_operator_args={
+                "callback": "etl.orchestration.nyc_hvfhs_cosmos.archive_cosmos_dbt_run_results"
+            },
+        ),
+        operator_args={
+            "vars": {
+                "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+                "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            },
+            "env": {
+                "REDSHIFT_HOST": "{{ var.value.redshift_host }}",
+                "REDSHIFT_WORKGROUP_NAME": "{{ var.value.redshift_workgroup_name }}",
+                "REDSHIFT_DATABASE": "{{ var.value.redshift_database }}",
+                "AWS_ACCOUNT_ID": "{{ var.value.aws_account_id }}",
+                "AWS_REGION": "{{ var.value.aws_region }}",
+            },
+        },
+    )
+
+    dbt_result_artifact = PythonOperator(
+        task_id="dbt_result_artifact",
+        python_callable=require_dbt_result_artifact,
         op_kwargs={
-            "year": "{{ params.year }}",
-            "month": "{{ params.month }}",
-            "force": "{{ params.force }}",
+            "publication_prefix_uri": "{{ var.value.nyc_publication_prefix_uri }}",
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
         },
     )
 
-    bronze_ingestion = GlueJobOperator(
-        task_id="bronze_ingestion",
-        job_name="{{ var.value.nyc_bronze_job_name }}",
-        script_args={
-            "--SOURCE_URI": "{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}",
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--SOURCE_CHECKSUM": "{{ ti.xcom_pull(task_ids='prepare_month')['source_checksum'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-            "--TAXI_ZONE_URI": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_uri'] }}",
-            "--TAXI_ZONE_CHECKSUM": "{{ ti.xcom_pull(task_ids='prepare_month')['taxi_zone_checksum'] }}",
-            "--SOURCE_SIZE_BYTES": "{{ ti.xcom_pull(task_ids='prepare_month')['source_size_bytes'] }}",
-            "--FORCE": "{{ ti.xcom_pull(task_ids='prepare_month')['force'] }}",
+    reconciliation = PythonOperator(
+        task_id="reconciliation",
+        python_callable=reconcile_month,
+        op_kwargs={
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+            "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
         },
-        aws_conn_id="aws_default",
-        wait_for_completion=True,
-        verbose=True,
     )
 
-    great_expectations_checkpoint = GlueJobOperator(
-        task_id="great_expectations_checkpoint",
-        job_name="{{ var.value.nyc_great_expectations_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-        },
-        aws_conn_id="aws_default",
-        wait_for_completion=True,
-        verbose=True,
-    )
-
-    silver_transform = GlueJobOperator(
-        task_id="silver_transform",
-        job_name="{{ var.value.nyc_silver_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-            "--INGESTION_RUN_ID": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
-        },
-        aws_conn_id="aws_default",
-        wait_for_completion=True,
-        verbose=True,
-    )
-
-    dbt_build = BashOperator(
-        task_id="dbt_build",
-        bash_command=(
-            "cd {{ var.value.nyc_project_root }}/etl/dbt_project && "
-            "dbt build --profiles-dir . --target glue"
-        ),
-    )
-
-    quality_checkpoint = GlueJobOperator(
-        task_id="quality_checkpoint",
-        job_name="{{ var.value.nyc_quality_checkpoint_job_name }}",
-        script_args={
-            "--SOURCE_YEAR": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
-            "--SOURCE_MONTH": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
-        },
-        aws_conn_id="aws_default",
-        wait_for_completion=True,
-        verbose=True,
-    )
-
-    publication_manifest = BashOperator(
+    publication_manifest = PythonOperator(
         task_id="publication_manifest",
-        bash_command=(
-            "python -m scripts.publish_publication_manifest "
-            "--manifest-uri '{{ var.value.nyc_manifest_uri }}' "
-            "--source-uri \"{{ ti.xcom_pull(task_ids='prepare_month')['source_uri'] }}\" "
-            "--ingestion-run-id \"{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}\" "
-            "--source-year {{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }} "
-            "--source-month {{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }} "
-            "--gold-row-count {{ var.value.nyc_gold_row_count }} --validated"
-        ),
+        python_callable=publish_month,
+        op_kwargs={
+            "audit": "{{ ti.xcom_pull(task_ids='prepare_month') }}",
+            "reconciliation": "{{ ti.xcom_pull(task_ids='reconciliation') }}",
+            "dbt_result_uri": "{{ ti.xcom_pull(task_ids='dbt_result_artifact') }}",
+            "publication_prefix_uri": "{{ var.value.nyc_publication_prefix_uri }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+        },
     )
 
-    athena_smoke = BashOperator(
-        task_id="athena_smoke",
-        bash_command=(
-            'if [ "${ATHENA_SMOKE_ENABLED:-false}" != "true" ]; then '
-            "echo 'Athena smoke command deferred; set ATHENA_SMOKE_ENABLED=true in approved cloud config.'; "
-            "else python -m athena.verify_gold "
-            "--year {{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }} "
-            "--month {{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }} "
-            "--database $GLUE_GOLD_DATABASE --workgroup $ATHENA_WORKGROUP; fi"
-        ),
-        env={
-            "GLUE_GOLD_DATABASE": "{{ var.value.glue_gold_database }}",
-            "ATHENA_WORKGROUP": "{{ var.value.athena_workgroup }}",
-            "ATHENA_SMOKE_ENABLED": "{{ var.value.athena_smoke_enabled | default('false') }}",
+    verification = PythonOperator(
+        task_id="verification",
+        python_callable=verify_month,
+        op_kwargs={
+            "source_year": "{{ ti.xcom_pull(task_ids='prepare_month')['source_year'] }}",
+            "source_month": "{{ ti.xcom_pull(task_ids='prepare_month')['source_month'] }}",
+            "ingestion_run_id": "{{ ti.xcom_pull(task_ids='prepare_month')['run_id'] }}",
+            "publication": "{{ ti.xcom_pull(task_ids='publication_manifest') }}",
+            "redshift_database": "{{ var.value.redshift_database }}",
+            "redshift_workgroup_name": "{{ var.value.redshift_workgroup_name }}",
         },
     )
 
     (
         prepare_month
         >> bronze_ingestion
-        >> great_expectations_checkpoint
         >> silver_transform
         >> dbt_build
-        >> quality_checkpoint
+        >> dbt_result_artifact
+        >> reconciliation
         >> publication_manifest
-        >> athena_smoke
+        >> verification
     )
-
-
-def _backfill_params() -> dict[str, Param]:
-    return {
-        "year": Param(2024, type="integer", minimum=2019, maximum=2099),
-        "month": Param(1, type="integer", minimum=1, maximum=9),
-        "force": Param(False, type="boolean"),
-    }
 
 
 with DAG(
     dag_id=BACKFILL_DAG_ID,
-    description="Manually trigger four consecutive NYC HVFHV monthly runs in order.",
+    description="Trigger four bounded monthly runs sequentially.",
     schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
-    params=_backfill_params(),
+    params=_monthly_params(),
     render_template_as_native_obj=True,
     tags=["nyc", "hvfhs", "iceberg", "manual", "backfill"],
 ) as nyc_hvfhs_four_month_backfill_dag:
-    trigger_month_1 = TriggerDagRunOperator(
-        task_id="trigger_month_1",
-        trigger_dag_id=MONTHLY_DAG_ID,
-        conf={
-            "year": "{{ params.year }}",
-            "month": "{{ params.month }}",
-            "force": "{{ params.force }}",
-        },
-        wait_for_completion=True,
-    )
-    trigger_month_2 = TriggerDagRunOperator(
-        task_id="trigger_month_2",
-        trigger_dag_id=MONTHLY_DAG_ID,
-        conf={
-            "year": "{{ params.year }}",
-            "month": "{{ (params.month | int) + 1 }}",
-            "force": "{{ params.force }}",
-        },
-        wait_for_completion=True,
-    )
-    trigger_month_3 = TriggerDagRunOperator(
-        task_id="trigger_month_3",
-        trigger_dag_id=MONTHLY_DAG_ID,
-        conf={
-            "year": "{{ params.year }}",
-            "month": "{{ (params.month | int) + 2 }}",
-            "force": "{{ params.force }}",
-        },
-        wait_for_completion=True,
-    )
 
-    trigger_month_4 = TriggerDagRunOperator(
-        task_id="trigger_month_4",
-        trigger_dag_id=MONTHLY_DAG_ID,
-        conf={
-            "year": "{{ params.year }}",
-            "month": "{{ (params.month | int) + 3 }}",
-            "force": "{{ params.force }}",
-        },
-        wait_for_completion=True,
-    )
+    def _prepare_backfill(year: int, month: int) -> list[dict[str, int]]:
+        return [
+            {"year": request.year, "month": request.month}
+            for request in sequential_backfill_requests(int(year), int(month))
+        ]
 
-    trigger_month_1 >> trigger_month_2 >> trigger_month_3 >> trigger_month_4
+    prepare_backfill = PythonOperator(
+        task_id="prepare_backfill",
+        python_callable=_prepare_backfill,
+        op_kwargs={"year": "{{ params.year }}", "month": "{{ params.month }}"},
+    )
+    triggers = [
+        TriggerDagRunOperator(
+            task_id=f"trigger_month_{index + 1}",
+            trigger_dag_id=MONTHLY_DAG_ID,
+            conf=f"{{{{ ti.xcom_pull(task_ids='prepare_backfill')[{index}] }}}}",
+            wait_for_completion=True,
+        )
+        for index in range(4)
+    ]
+    prepare_backfill >> triggers[0] >> triggers[1] >> triggers[2] >> triggers[3]
 
 
 nyc_hvfhs_monthly_dag.doc_md = """
 # NYC HVFHV monthly orchestration
 
-Manually trigger this DAG with `year`, `month`, and `force`. `force` only
-requests a retry of the same immutable source identity; a changed checksum must
-be blocked by the manifest contract. Great Expectations is the mandatory
-promotion gate before Silver; the post-Gold quality task is reconciliation.
+Trigger with `year` and `month`. The same immutable object identity may be
+rerun safely; a changed URI, SHA-256, or byte size is rejected. Bronze owns
+source checks, Silver owns validation/quarantine, dbt owns Gold tests, and
+reconciliation owns the two cross-layer count invariants.
 """

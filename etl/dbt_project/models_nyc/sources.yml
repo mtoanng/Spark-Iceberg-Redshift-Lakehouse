@@ -2,24 +2,31 @@ version: 2
 
 sources:
   - name: bronze
-    description: Source-faithful NYC TLC lookup data in Iceberg.
-    schema: bronze
+    description: Source-faithful NYC TLC lookup data through Redshift Spectrum.
+    schema: bronze_external
     tables:
       - name: bronze_taxi_zones
         columns:
           - name: LocationID
             data_tests:
+              - unique
               - not_null
 
   - name: silver
-    description: Validated, deduplicated NYC HVFHV trips in Iceberg.
-    schema: silver
+    description: Validated, deduplicated NYC HVFHV trips through Redshift Spectrum.
+    schema: silver_external
     tables:
       - name: silver_trips
         columns:
-          - name: trip_id
+          - name: row_id
             data_tests:
               - unique
+              - not_null
+          - name: business_trip_key
+            data_tests:
+              - not_null
+          - name: identity_policy_version
+            data_tests:
               - not_null
           - name: pickup_datetime
             data_tests:

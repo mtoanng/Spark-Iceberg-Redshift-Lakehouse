@@ -1,65 +1,42 @@
-# Cloud evidence template
+# Bounded AWS evidence
 
-Status: **NOT VERIFIED** until a bounded cloud run populates every required
-field with retained output.
+Status: **NOT VERIFIED** until populated from one retained AWS run.
 
-## Run identity
+## Source and identity
 
-- Environment label:
-- AWS region:
-- UTC start/end:
-- Operator/change reference:
-- Budget alert reference:
+- Year/month:
+- S3 URI:
+- SHA-256 metadata:
+- Byte size:
+- Stable run ID:
+- Identity policy version:
 
-## Source identity
+## Processing
 
-| Month | Object URI | Bytes | SHA-256 | Upload evidence |
-| --- | --- | ---: | --- | --- |
-| 2024-01 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-02 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-03 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-04 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
+- MWAA DAG run:
+- Bronze EMR job ID / count / snapshot:
+- Silver EMR job ID / count / snapshot:
+- Quarantine count / snapshot / reasons:
+- `Bronze = Silver + quarantine`: PASS / FAIL
 
-## Infrastructure
+## Gold and release
 
-- Terraform version/output:
-- Plan summary:
-- Apply summary:
-- S3 bucket:
-- Glue database:
-- Glue role:
-- Glue job names/run IDs:
-- Destroy plan/apply summary:
+- dbt invocation / artifact URI / SHA-256:
+- Six Gold relations present: PASS / FAIL
+- Gold fact count:
+- `Silver = Gold`: PASS / FAIL
+- Redshift reconciliation statement ID:
+- Publication URI / SHA-256:
+- Read-after-publish verification: PASS / FAIL
 
-## Data evidence
+## Operational proof
 
-| Month | Bronze | Silver | Quarantine | Gold fact | Reconciles? |
-| --- | ---: | ---: | ---: | ---: | --- |
-| 2024-01 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-02 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-03 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
-| 2024-04 | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED |
+- Cleared-task retry:
+- Identical monthly rerun:
+- Changed-identity rejection:
+- Four-month sequence:
+- 2025 evolution and 2024 version travel:
+- Bounded teardown:
 
-## Orchestration and quality
-
-- Airflow monthly DAG run:
-- Three-month sequence:
-- Retry evidence:
-- Clear-and-rerun evidence:
-- Force/checksum decision:
-- Quality checkpoint run/log:
-- dbt build/test output:
-- Great Expectations checkpoint output:
-- Athena query IDs, outputs, scanned bytes, and result locations:
-
-## Lifecycle (Phase 7)
-
-- 2025 schema evolution run:
-- Snapshot manifest URI/checksum:
-- Exact snapshot IDs:
-- Manual Athena version-travel query:
-- File metrics:
-- Compaction decision:
-- Retention dry-run:
-- Orphan-file dry-run:
-- Any destructive operation approval:
+Never place credentials, account IDs, private endpoints, raw source data,
+Terraform state, or saved plans in retained evidence.

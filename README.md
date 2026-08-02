@@ -1,128 +1,125 @@
-# NYC HVFHV Iceberg Lakehouse
+# NYC HVFHV serverless lakehouse
 
-An AWS lakehouse for the official NYC TLC High-Volume For-Hire Vehicle (HVFHV)
-trip dataset. The pipeline is month-scoped and uses Amazon S3, AWS Glue,
-Apache Iceberg, Great Expectations, dbt, Airflow 3, and Amazon Athena.
+This repository is a production-shaped, cost-bounded AWS data engineering
+project for monthly NYC ride-hailing data. It turns one immutable source month
+into governed Bronze and Silver Iceberg datasets and a tested Gold analytical
+product in Redshift.
 
-> **End-to-end data lakehouse with ML-powered product recommendations**  
+The deployment is intentionally small to control cost. The architecture keeps
+the same separation of orchestration, compute, storage, metadata, modeling,
+and serving that a larger production platform would use.
 
-<img width="1362" height="752" alt="image" src="https://github.com/user-attachments/assets/d3b03009-0079-451d-b564-0693aac7248f" />
+## Architecture
 
----
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/efe91dde-c03a-4ffa-8ba4-295e4e37c9a3" />
+
+The main responsibilities are deliberately explicit:
+
+| Component | Responsibility |
+| --- | --- |
+| S3 landing | Holds immutable monthly source files supplied by the upstream producer. |
+| Amazon MWAA / Airflow | Coordinates the monthly workflow, dependencies, retries, and reruns. |
+| EMR Serverless + Spark | Reads the source, creates Bronze, and produces validated Silver and quarantine records. |
+| S3 + Apache Iceberg | Stores the canonical open Bronze, Silver, quarantine, and operational tables with transactional snapshots. |
+| AWS Glue Data Catalog | Makes Iceberg metadata available to EMR and Redshift; it is not an ETL engine in this project. |
+| Redshift Serverless + Spectrum | Reads Silver from the lakehouse and serves managed Gold tables through one SQL query plane. |
+| Cosmos + dbt-redshift | Runs the dbt model and test graph under Airflow orchestration to build Gold. |
+| Publication manifest | Records the exact source, Iceberg snapshots, dbt result, and row counts accepted for a published month. |
+
+There is no Athena query path and no AWS Glue ETL job. EMR Serverless is the
+only Spark compute path, while Redshift is the analytical serving path.
+
+## How one monthly run works
+
+1. The upstream producer lands the trip Parquet file and taxi-zone reference
+   file in S3 with their SHA-256 metadata. This repository starts from that
+   landing contract; it does not download or upload source data.
+2. Airflow identifies the immutable source and starts the Bronze Spark job on
+   EMR Serverless. Bronze preserves the accepted source rows and records the
+   source run.
+3. A second Spark job validates and deterministically deduplicates Bronze.
+   Valid rows go to Silver; rejected rows go to quarantine with a reason.
+4. Redshift Spectrum reads the Silver Iceberg table through Glue Data Catalog.
+   Cosmos runs one tested dbt build that creates three dimensions, one fact,
+   and two analytical marts as managed Redshift relations.
+5. Reconciliation checks that all Bronze rows are accounted for and that the
+   Silver and Gold fact counts agree.
+6. Only a reconciled run receives an immutable publication manifest. A final
+   bounded read verifies that the published Gold output is available to a
+   consumer.
+
+## Reliability and correctness
+
+The pipeline is designed around a few observable guarantees rather than a
+large framework:
+
+- **Immutable source identity:** URI, SHA-256, object size, year, and month
+  identify a source. Changed content for an existing month is rejected.
+- **Safe reruns:** the same completed source reuses its committed Iceberg
+  snapshots and successful dbt result before revalidating the serving output.
+- **Deterministic row handling:** exact duplicate rows share a stable `row_id`;
+  validation rules always send each Bronze row to either Silver or quarantine.
+- **Cross-layer reconciliation:** `Bronze = Silver + quarantine` and
+  `Silver = Gold fct_trips` must hold before publication.
+- **Evidence-based publication:** the publication JSON ties the accepted
+  source to exact Iceberg snapshots, dbt output, and reconciled row counts.
+
+Detailed field-level rules, state transitions, and failure behavior live in
+[runtime semantics](docs/SEMANTICS.md).
+
+## Gold data product
+
+The consumer contract is six managed Redshift relations:
 
 ```text
-NYC TLC Parquet + Taxi Zone lookup
-  -> S3 landing/reference
-  -> Glue/PySpark Bronze + Iceberg
-  -> Great Expectations promotion gate
-  -> Glue/PySpark Silver + reason-coded quarantine
-  -> dbt-glue Gold
-  -> publication manifest
-  -> read-only Athena query pack
+dim_date
+dim_operator
+dim_zone
+fct_trips
+mart_hourly_zone_demand
+mart_operator_metrics
 ```
 
-Iceberg tables in S3 and the AWS Glue Data Catalog are the canonical storage
-and catalog layers. Athena is the bounded analytical serving layer. Invalid
-rows are retained in Silver quarantine with deterministic reason codes; they
-are not silently discarded.
+The marts support demand analysis by pickup zone and hour, plus monthly
+operator performance analysis. BI tools and SQL users consume these relations;
+a vendor-specific dashboard is intentionally outside this repository.
 
-## Status
+## Repository guide
 
-Closures A–C are implemented as static, credential-independent code and
-contracts. Local verification currently includes:
+```text
+etl/dags/             Airflow workflow and task dependencies
+etl/spark_jobs/       Bronze and Silver Spark transformations
+etl/dbt_project/      Redshift Gold models and tests
+etl/orchestration/    Reconciliation, publication, and verification boundaries
+terraform/            AWS infrastructure
+docs/                 Architecture, semantics, deployment, and teardown guides
+```
 
-- 59 passing unit and contract tests;
-- Python compilation and focused lint/format checks;
-- Athena runner, SQL, and Gold smoke contracts;
-- deterministic Glue package validation; and
-- Terraform format and validation checks.
+## Verify and deploy
 
-AWS credentials, S3/Glue/Iceberg execution, remote Great Expectations,
-Airflow scheduling, dbt-glue execution, Athena results, Terraform apply, and
-teardown remain **not verified**. No cloud resources are created by the local
-commands below.
-
-## Quick start: local checks
-
-Use the repository virtual environment. Local checks use fixtures and do not
-start a local Spark or Airflow service.
+Run the core local checks before planning infrastructure:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -p no:cacheprovider tests\unit tests\contract -q
-.\.venv\Scripts\python.exe -m compileall -q athena etl tests
-.\.venv\Scripts\python.exe scripts\package_glue_jobs.py --output build\nyc_glue_jobs.zip --check
+venv\Scripts\python.exe -m black --check etl scripts tests
+venv\Scripts\python.exe -m compileall -q etl scripts tests
+venv\Scripts\python.exe -m pytest -p no:cacheprovider tests/unit -q
+venv\Scripts\python.exe scripts/package_spark_jobs.py --output build/nyc_spark_jobs.zip --check
 
-$env:GLUE_ROLE_ARN = 'arn:aws:iam::000000000000:role/local-parse-only'
-$env:S3_GOLD_PATH = 's3://local-parse-only/gold'
-Push-Location etl\dbt_project
-..\..\.venv\Scripts\dbt.exe deps --profiles-dir .
-..\..\.venv\Scripts\dbt.exe parse --profiles-dir . --target local_parse --no-partial-parse
-Pop-Location
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
 ```
 
-The `local_parse` target validates the dbt graph without cloud credentials.
-Do not run local `dbt compile` or a local Spark/Airflow service unless you
-intend to provide and manage those runtimes.
+For prerequisites, service quotas, Terraform state setup, deployment order,
+the first bounded AWS run, retained evidence, and safe cleanup, follow the
+[deployment runbook](docs/RUNBOOK.md). The [architecture document](docs/ARCHITECTURE.md)
+explains the component boundaries, and the [teardown runbook](docs/TEARDOWN_RUNBOOK.md)
+covers resource removal.
 
-## Repository map
+## Verification status
 
-| Path | Purpose |
-| --- | --- |
-| `etl/sources` | Source and Taxi Zone contracts |
-| `etl/glue_jobs` | Bronze, Silver, quality, and Iceberg Glue entrypoints |
-| `etl/manifests` | Durable monthly run-manifest state machine |
-| `etl/quality` | Great Expectations suites and checkpoint logic |
-| `etl/dbt_project` | Six Iceberg Gold models and dbt tests |
-| `etl/dags` | Manually triggered Airflow 3 monthly DAGs |
-| `athena` | Read-only query runner and Gold smoke verifier |
-| `terraform` | Bounded NYC-only AWS deployment definition |
-| `scripts` | Packaging, release, reconciliation, smoke, and teardown helpers |
-| `tests/unit`, `tests/contract` | Credential-independent verification |
-| `docs` | Architecture, status, evidence, and operator runbooks |
-
-Gold contains exactly `dim_date`, `dim_operator`, `dim_zone`, `fct_trips`,
-`mart_hourly_zone_demand`, and `mart_operator_metrics`.
-
-## Monthly execution model
-
-An approved remote AWS run follows this order for each month:
-
-1. Upload the exact source Parquet and Taxi Zone lookup files after recording
-   their SHA-256 checksums and sizes.
-2. Initialize the Iceberg tables once.
-3. Run Bronze ingestion with the source URI, checksum, month, and run ID.
-4. Run the mandatory Great Expectations checkpoint. A blocking failure
-   persists `ge_blocked` and prevents Silver publication.
-5. Run Silver validation/transformation and reconcile valid rows with
-   reason-coded quarantine.
-6. Run `dbt build --target glue` for the six Gold models.
-7. Reconcile outputs, publish the validated manifest, and run the bounded
-   Athena smoke/business/history query pack.
-
-The Airflow DAG `nyc_hvfhs_monthly` exposes `year`, `month`, and `force`
-parameters. `nyc_hvfhs_four_month_backfill` sequences four monthly runs.
-`force` permits retrying an identical completed source; it does not permit a
-different checksum to replace an existing source.
-
-## Remote deployment and teardown
-
-These are operator runbooks for an approved disposable AWS environment, not
-evidence that AWS has been run:
-
-- [Implementation status](docs/IMPLEMENTATION_STATUS.md)
-- [Deployment runbook](docs/DEPLOYMENT_RUNBOOK.md)
-- [Cloud demo and teardown runbook](docs/CLOUD_DEMO_RUNBOOK.md)
-- [Cloud evidence template](docs/CLOUD_EVIDENCE_TEMPLATE.md)
-- [Codebase index](docs/CODEBASE_INDEX.md)
-- [Project blueprint](docs/PROJECT2_BLUEPRINT_FINAL.md)
-
-Before any apply or teardown, review the plan, set a budget limit, confirm
-data-retention requirements, and obtain explicit approval. Terraform is
-configured with protected storage and does not implicitly delete canonical
-data.
-
-## Scope boundary
-
-The active project is the NYC HVFHV lakehouse. The `legacy/` tree contains
-archived Instacart-era code and documentation and is not part of the active
-pipeline.
+Local tests validate code, contracts, packaging, dbt parsing, and Terraform
+configuration. They do not prove a live AWS deployment. MWAA, S3, EMR
+Serverless, Iceberg commits, Redshift Serverless/Spectrum, rerun behavior,
+schema evolution, and teardown remain **NOT VERIFIED** until the project
+retains evidence from a bounded end-to-end AWS run.

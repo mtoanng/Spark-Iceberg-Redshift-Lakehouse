@@ -4,23 +4,17 @@ config-version: 2
 
 profile: 'nyc_hvfhs_lakehouse'
 
-# Directories
-model-paths: ["models_nyc"]
-analysis-paths: ["analyses"]
-test-paths: ["tests"]
-seed-paths: ["seeds"]
-macro-paths: ["macros"]
-snapshot-paths: ["snapshots"]
-packages-install-path: "target/dbt_packages_local"
+vars:
+  source_year: 2024
+  source_month: 1
 
-# Build artifacts
+model-paths: ["models_nyc"]
+test-paths: ["tests"]
 target-path: "target"
 clean-targets:
   - "target"
-  - "dbt_packages"
   - "logs"
 
 models:
   nyc_hvfhs_lakehouse:
     +materialized: table
-    +file_format: iceberg
